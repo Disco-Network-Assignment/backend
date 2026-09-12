@@ -79,3 +79,29 @@ purchases and 60% for subscriptions. The pilot budget scales with how much of th
 stated rather than assumed ($5k/14d → $1.5k/7d). `confidence`, `assumptions` and
 `open_questions` are fields of the config because a draft that hides its uncertainty is not
 reviewable.
+
+## With another week
+
+Learn from outcomes: log every recommendation and its CTR/CVR per advertiser × publisher ×
+persona, re-weight the signal prior nightly, and grow a human-labelled eval set into a CI gate.
+A retrieval layer (embeddings over category + notes, hard filters on demographics/AOV) so a
+10k-publisher catalog is a top-50 re-rank, not a 20-row prompt. Durable orchestration (queue,
+idempotent stages, retries, a fallback model), a claims-policy engine per category, an editable
+config with an approval state, and per-publisher creative variants.
+
+## Intentionally cut
+
+A database and accounts (a JSON download is the hand-off), image creative, real auction
+modelling (heuristic bands with stated assumptions are more honest than fake precision),
+multi-turn refinement (one interpretation-chip re-run covers most of it), agent frameworks (the
+orchestration is ~150 lines and the seams stay visible), and config editing in the UI.
+
+## Hard vs easy, and where the engineering lives
+
+Easy: the UI plumbing, the JSON contracts, streaming, the allocation arithmetic. Hard:
+calibrated matching without ground truth (a model will happily rank by reach; the signals,
+guardrails and rubric anchors exist to stop that), copy that is persona-specific rather than
+merely plausible (angle-per-persona plus lint plus one retry), deciding when to ask versus
+assume (the router policy, tested case by case), and keeping the demo deterministic (the
+heuristic executor). The interesting work is the contract layer between model and code, the
+eval harness that measures it, and the outcome feedback loop that does not exist yet.
