@@ -1,0 +1,4 @@
+# normalise line endings so Windows and CI produce identical files
+* text=auto eol=lf
+*.png binary
+*.jpg binary
