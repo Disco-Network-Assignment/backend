@@ -1,1 +1,1 @@
-"""API routers: plan (the pipeline) and catalog (read-only data pack)."""
+"""API routers: plan (the pipeline) and examples (the sample advertisers)."""

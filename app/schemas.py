@@ -458,11 +458,6 @@ class PlanResponse(BaseModel):
     stopped: StopResult | None = None
 
 
-class CatalogResponse(BaseModel):
-    publishers: list[Publisher]
-    personas: list[ShopperPersona]
-
-
 class HealthResponse(BaseModel):
     status: Literal["ok"] = "ok"
     mode: ExecutionMode

@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app import __version__
 from app.config import settings
 from app.dependencies import get_catalog, get_pipeline_provider, get_prompts
-from app.routes import catalog, plan
+from app.routes import examples, plan
 from app.schemas import HealthResponse
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -35,7 +35,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(plan.router)
-app.include_router(catalog.router)
+app.include_router(examples.router)
 
 
 @app.get("/health", response_model=HealthResponse)

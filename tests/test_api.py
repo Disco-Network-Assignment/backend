@@ -56,10 +56,6 @@ class TestReadOnly:
         body = (await client.get("/api/examples")).json()
         assert len(body) == 15 and body[0]["number"] == 1
 
-    async def test_catalog(self, client):
-        body = (await client.get("/api/catalog")).json()
-        assert len(body["publishers"]) == 20 and len(body["personas"]) == 10
-
     async def test_health(self, client):
         body = (await client.get("/health")).json()
         assert body["status"] == "ok" and body["mode"] == "heuristic"

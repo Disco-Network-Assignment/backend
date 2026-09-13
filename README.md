@@ -18,8 +18,9 @@ curl -N localhost:8000/api/plan -H 'content-type: application/json' \
   -d '{"description":"We sell premium dog food for senior dogs. Grain-free, vet-formulated, subscription-based."}'
 ```
 
-`pytest` runs 146 hermetic tests (no network). `python -m evals.run` grades the 15 sample
-advertisers against `evals/cases.py` in whichever mode is configured.
+`pytest` runs 85 hermetic tests in four files (domain rules, pipeline end to end, API, SDK runner
+against a fake model; no network). `python -m evals.run` grades the 15 sample advertisers
+against `evals/cases.py` in whichever mode is configured.
 
 ## How it works
 
@@ -60,7 +61,7 @@ app/
   enums.py          domain vocabularies (StrEnum)
   schemas.py        contracts: catalog rows, stage hand-offs (*Draft = agent output), API shapes
   dependencies.py   composition root (create_pipeline, PipelineProvider)
-  routes/           plan (stream + run), catalog (data pack, examples)
+  routes/           plan (stream + run), examples (the sample advertisers)
   pipeline/         orchestrator: the workflow, event protocol, creative fan-out
   agents/           factory (SDK Agent per stage) · runner (structured output, validation,
                     one retry, usage) · executor (StageExecutor contract + LLM impl) · heuristic
