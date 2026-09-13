@@ -18,7 +18,6 @@ from app.domain.signals import SignalCalculator
 from app.enums import ExecutionMode
 from app.pipeline.orchestrator import CampaignPipeline
 from app.prompts.registry import PromptRegistry
-from app.services.cache import StageCache
 
 logger = logging.getLogger(__name__)
 
@@ -33,43 +32,28 @@ def get_prompts() -> PromptRegistry:
     return PromptRegistry(settings().prompts_dir)
 
 
-def create_executor(mode: ExecutionMode, config: Settings, catalog: CatalogRepository,
-                    prompts: PromptRegistry) -> StageExecutor:
-    signals = SignalCalculator(catalog)
-    if mode is ExecutionMode.HEURISTIC:
-        return HeuristicStageExecutor(catalog, signals)
-    return LlmStageExecutor(
-        factory=AgentFactory(config),
-        runner=StructuredRunner(config, prompts),
-        prompts=prompts,
-        catalog=catalog,
-        guard=AssessmentGuard(catalog),
-        cache=StageCache(enabled=config.stage_cache_enabled),
-    )
-
-
 def create_pipeline(mode: ExecutionMode, config: Settings | None = None,
                     catalog: CatalogRepository | None = None,
                     prompts: PromptRegistry | None = None) -> CampaignPipeline:
-    """Factory for non-request contexts (evals, scripts, tests)."""
+    """Factory for any context (routes, evals, tests)."""
     config = config or settings()
     catalog = catalog or get_catalog()
     prompts = prompts or get_prompts()
-    return CampaignPipeline(
-        executor=create_executor(mode, config, catalog, prompts),
-        catalog=catalog,
-        signal_calculator=SignalCalculator(catalog),
-        guard=AssessmentGuard(catalog),
-        router=InputRouter(),
-        linter=CreativeLinter(),
-        planner=CampaignPlanner(catalog),
-        summary_enabled=config.summary_stage_enabled,
-    )
+    signals = SignalCalculator(catalog)
+    guard = AssessmentGuard(catalog)
+    executor: StageExecutor
+    if mode is ExecutionMode.HEURISTIC:
+        executor = HeuristicStageExecutor(catalog, signals)
+    else:
+        executor = LlmStageExecutor(AgentFactory(config), StructuredRunner(config, prompts),
+                                    prompts, catalog, guard)
+    return CampaignPipeline(executor, catalog, signals, guard, InputRouter(), CreativeLinter(),
+                            CampaignPlanner(catalog), summary_enabled=config.summary_stage_enabled)
 
 
 class PipelineProvider:
-    """Hands out one pipeline per execution mode; a request may ask for a mode, but LLM mode
-    silently becomes heuristic when no key is configured (and says so in the trace)."""
+    """One pipeline per execution mode. A request may ask for LLM mode, but without a key it
+    gets the heuristic one (and the trace says so)."""
 
     def __init__(self, config: Settings) -> None:
         self._config = config
@@ -79,15 +63,11 @@ class PipelineProvider:
     def default_mode(self) -> ExecutionMode:
         return self._config.effective_mode
 
-    def resolve_mode(self, requested: ExecutionMode | None) -> ExecutionMode:
+    def for_mode(self, requested: ExecutionMode | None) -> CampaignPipeline:
         mode = requested or self.default_mode
         if mode is ExecutionMode.LLM and not self._config.openai_api_key:
             logger.warning("[PIPELINE] LLM mode requested without OPENAI_API_KEY; using heuristic")
-            return ExecutionMode.HEURISTIC
-        return mode
-
-    def for_mode(self, requested: ExecutionMode | None) -> CampaignPipeline:
-        mode = self.resolve_mode(requested)
+            mode = ExecutionMode.HEURISTIC
         if mode not in self._pipelines:
             self._pipelines[mode] = create_pipeline(mode, self._config)
         return self._pipelines[mode]

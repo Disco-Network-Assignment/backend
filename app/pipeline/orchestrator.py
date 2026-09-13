@@ -42,7 +42,6 @@ from app.schemas import (
     CampaignSummary,
     CreativeVariant,
     FitSignals,
-    LintIssue,
     LintReport,
     PersonaPick,
     PersonaPickDraft,
@@ -195,19 +194,13 @@ class CampaignPipeline:
         candidates = ctx.recommended or ctx.assessments[:3]  # exploratory runs use the least-bad
         run = await self._executor.select_personas(ctx.brief, candidates, ctx.decision.persona_cap)
         ctx.trace.append(run.meta)
-        catalog = self._catalog
-        selected = [PersonaPick(**p.model_dump(), persona_name=catalog.persona(p.persona_id).name)
-                    for p in run.output.selected if catalog.has_persona(p.persona_id)]
+        name = lambda persona_id: self._catalog.persona(persona_id).name  # noqa: E731
         valid_ids = {c.publisher_id for c in candidates}
-        for pick in selected:
-            pick.best_publishers = [i for i in pick.best_publishers if i in valid_ids]
-        rejected = [RejectedPersona(**r.model_dump(), persona_name=catalog.persona(r.persona_id).name)
-                    for r in run.output.rejected if catalog.has_persona(r.persona_id)]
-        chosen = {p.persona_id for p in selected}
-        for persona in catalog.personas:  # every persona is accounted for in the UI
-            if persona.id not in chosen and persona.id not in {r.persona_id for r in rejected}:
-                rejected.append(RejectedPersona(persona_id=persona.id, persona_name=persona.name,
-                                                why_not="Not selected by the strategist."))
+        selected = [PersonaPick(**p.model_dump(exclude={"best_publishers"}), persona_name=name(p.persona_id),
+                                best_publishers=[i for i in p.best_publishers if i in valid_ids])
+                    for p in run.output.selected if self._catalog.has_persona(p.persona_id)]
+        rejected = [RejectedPersona(**r.model_dump(), persona_name=name(r.persona_id))
+                    for r in run.output.rejected if self._catalog.has_persona(r.persona_id)]
         return PersonaSelection(selected=selected, rejected=rejected)
 
     async def _creatives(self, ctx: PipelineContext) -> AsyncIterator[PipelineEvent]:
@@ -227,40 +220,27 @@ class CampaignPipeline:
                 task.cancel()
         order = {pick.persona_id: i for i, pick in enumerate(picks)}
         ctx.creatives.sort(key=lambda v: order[v.persona_id])
-        self._flag_duplicate_headlines(ctx.creatives)
 
     async def _creative(self, ctx: PipelineContext, pick: PersonaPick) -> CreativeVariant:
+        """One copywriter call, linted; a hard lint failure buys exactly one rewrite."""
         assert ctx.brief
         persona = self._catalog.persona(pick.persona_id)
         targets = pick.best_publishers or [a.publisher_id for a in ctx.recommended[:3]]
         draft_pick = PersonaPickDraft(**pick.model_dump(exclude={"persona_name"}))
         run = await self._executor.write_creative(ctx.brief, draft_pick, persona, targets, feedback=[])
         ctx.trace.append(run.meta)
-        issues = self._linter.lint(LintContext(run.output, persona, ctx.request.description, ()))
-        retried = False
-        if not self._linter.passed(issues):
-            retried = True
+        issues = self._linter.lint(LintContext(run.output, persona, ctx.request.description))
+        retried = not self._linter.passed(issues)
+        if retried:
             feedback = [i.message for i in issues if i.severity is LintSeverity.HARD]
             run = await self._executor.write_creative(ctx.brief, draft_pick, persona, targets, feedback)
             ctx.trace.append(run.meta)
-            issues = self._linter.lint(LintContext(run.output, persona, ctx.request.description, ()))
+            issues = self._linter.lint(LintContext(run.output, persona, ctx.request.description))
         return CreativeVariant(
             **run.output.model_dump(), id=f"creative-{pick.persona_id}", persona_id=pick.persona_id,
             persona_name=persona.name, target_publishers=targets,
             lint=LintReport(passed=self._linter.passed(issues), issues=issues, retried=retried),
         )
-
-    @staticmethod
-    def _flag_duplicate_headlines(creatives: list[CreativeVariant]) -> None:
-        seen: dict[str, str] = {}
-        for variant in creatives:
-            key = variant.headline.strip().lower()
-            if key in seen:
-                variant.lint.issues.append(LintIssue(
-                    severity=LintSeverity.SOFT, rule="duplicate_headline",
-                    message=f"headline duplicates the {seen[key]} variant"))
-            else:
-                seen[key] = variant.persona_name
 
     @staticmethod
     def _plan_view(ctx: PipelineContext) -> dict:

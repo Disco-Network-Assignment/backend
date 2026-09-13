@@ -10,8 +10,8 @@ def linter():
     return CreativeLinter()
 
 
-def issues_for(linter, catalog, persona_id="persona_004", description="vet-formulated", others=(), **draft):
-    ctx = LintContext(create_sample_creative(**draft), catalog.persona(persona_id), description, others)
+def issues_for(linter, catalog, persona_id="persona_004", description="vet-formulated", **draft):
+    ctx = LintContext(create_sample_creative(**draft), catalog.persona(persona_id), description)
     return linter.lint(ctx)
 
 
@@ -60,11 +60,8 @@ class TestPersonaDisinterestRule:
 
 
 class TestSoftRules:
-    def test_duplicate_headline_is_soft(self, linter, catalog):
-        issues = issues_for(linter, catalog, others=("joint support they will actually eat",))
-        assert issues and all(i.severity is LintSeverity.SOFT for i in issues)
-        assert CreativeLinter.passed(issues)
-
-    def test_shouting_is_soft(self, linter, catalog):
+    def test_shouting_is_soft_and_still_passes(self, linter, catalog):
         issues = issues_for(linter, catalog, headline="HUGE DEAL TODAY!! Really!")
         assert {i.message for i in issues} == {"more than one ALL-CAPS word", "more than one exclamation mark"}
+        assert all(i.severity is LintSeverity.SOFT for i in issues)
+        assert CreativeLinter.passed(issues)

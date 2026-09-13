@@ -64,11 +64,11 @@ class CatalogRepository:
     def example_descriptions(self) -> list[str]:
         return [e.description for e in self._examples]
 
-    def compact_publishers(self) -> list[dict]:
-        """The catalog as the matcher agent sees it: every field, nothing renamed."""
+    def publishers_as_dicts(self) -> list[dict]:
+        """The catalog as the agents see it: every field, nothing renamed."""
         return [p.model_dump() for p in self._publishers]
 
-    def compact_personas(self) -> list[dict]:
+    def personas_as_dicts(self) -> list[dict]:
         return [p.model_dump() for p in self._personas]
 
     @staticmethod

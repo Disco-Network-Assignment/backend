@@ -64,7 +64,7 @@ class TestStructuredRunner:
         run = await make_runner(test_settings, prompts).run(Stage.INTAKE, make_agent(model), PROMPT, Reply)
         assert run.output == Reply(answer="ok", score=0.9)
         assert run.meta.input_tokens == 10 and run.meta.output_tokens == 5
-        assert run.meta.prompt_version == "7" and not run.meta.retried and not run.meta.cached
+        assert run.meta.prompt_version == "7" and not run.meta.retried
         # the SDK normalises the string input into one user message before the model sees it
         assert model.inputs == [[{"content": "Question?", "role": "user"}]]
 

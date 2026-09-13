@@ -1,9 +1,6 @@
-"""Creative QA. The copywriter agent is asked to respect lengths, avoid claims the advertiser
-never made, and avoid what the persona is disinterested in; this module checks that it did.
-Hard issues trigger one regeneration with the issues quoted back, soft issues become warnings.
-
-Rules are small classes behind one Protocol so the interview's "add a lint rule" is one class
-and one line in DEFAULT_RULES."""
+"""Creative QA. The copywriter is asked to respect lengths, avoid claims the advertiser never
+made, and avoid what the persona is disinterested in; this checks that it did. Hard issues
+trigger one regeneration with the issues quoted back; soft issues become warnings."""
 
 import re
 from dataclasses import dataclass
@@ -21,8 +18,7 @@ CTA_MAX = 20
 class LintContext:
     draft: CreativeDraft
     persona: ShopperPersona
-    description: str                  # the advertiser text: stated claims are allowed
-    other_headlines: tuple[str, ...]  # headlines already written for other personas
+    description: str  # the advertiser text: claims it states are allowed
 
 
 class LintRule(Protocol):
@@ -35,16 +31,14 @@ class LengthRule:
     name = "length"
 
     def check(self, ctx: LintContext) -> list[LintIssue]:
-        limits = (("headline", ctx.draft.headline, HEADLINE_MAX),
-                  ("body", ctx.draft.body, BODY_MAX),
-                  ("cta", ctx.draft.cta, CTA_MAX))
         issues = []
-        for field_name, text, limit in limits:
+        for field_name, text, limit in (("headline", ctx.draft.headline, HEADLINE_MAX),
+                                        ("body", ctx.draft.body, BODY_MAX),
+                                        ("cta", ctx.draft.cta, CTA_MAX)):
             if not text.strip():
-                issues.append(_hard(self.name, f"{field_name} is empty"))
+                issues.append(hard(self.name, f"{field_name} is empty"))
             elif len(text) > limit:
-                issues.append(_hard(self.name, f"{field_name} is {len(text)} characters "
-                                               f"(max {limit})"))
+                issues.append(hard(self.name, f"{field_name} is {len(text)} characters (max {limit})"))
         return issues
 
 
@@ -52,23 +46,23 @@ class ClaimsRule:
     """Claims that need substantiation are only allowed when the advertiser stated them."""
 
     name = "claims"
-    _pattern = re.compile(
+    pattern = re.compile(
         r"\b(cures?|cured|guaranteed|clinically proven|doctor[- ]recommended|#1|number one|"
         r"miracle|100%|scientifically proven|fda[- ]approved)\b", re.I)
 
     def check(self, ctx: LintContext) -> list[LintIssue]:
         text = f"{ctx.draft.headline} {ctx.draft.body} {ctx.draft.cta} {ctx.draft.alt_headline}"
         stated = ctx.description.lower()
-        return [_hard(self.name, f"unsubstantiated claim '{m.group(0)}'")
-                for m in self._pattern.finditer(text) if m.group(0).lower() not in stated]
+        return [hard(self.name, f"unsubstantiated claim '{m.group(0)}'")
+                for m in self.pattern.finditer(text) if m.group(0).lower() not in stated]
 
 
 class PersonaDisinterestRule:
     """Maps the data pack's `disinterested_in` phrases to the words that betray them. Phrases
-    without a pattern are matters of judgement left to the model (and the reviewer)."""
+    without a pattern are matters of judgement left to the model and the reviewer."""
 
     name = "persona_disinterest"
-    _patterns: dict[str, re.Pattern[str]] = {
+    patterns: dict[str, re.Pattern[str]] = {
         "trendy language": re.compile(r"\b(trendy|viral|slay|obsessed|iconic|vibes?)\b", re.I),
         "loud aesthetics": re.compile(r"\b(bold|loud|neon|statement)\b", re.I),
         "influencer positioning": re.compile(r"\b(influencer|creator|as seen on|tiktok)\b", re.I),
@@ -83,57 +77,41 @@ class PersonaDisinterestRule:
         "subscription-only": re.compile(r"\b(subscribe|subscription|monthly plan)\b", re.I),
         "excessive packaging": re.compile(r"\b(gift box(?:ed)?|lavish(?:ly)? wrapped)\b", re.I),
     }
-    # a vague eco word is fine when a specific claim sits next to it
-    _specific_eco = re.compile(r"\b(recycled|refill\w*|certified|carbon|plastic|%|compostable|"
-                               r"b corp|fsc|organic)\b", re.I)
-    _gift_framing = re.compile(r"\b(gift|gifting|give|treat someone)\b", re.I)
+    # a vague eco word is fine next to a specific claim; a subscription is fine framed as a gift
+    specific_eco = re.compile(r"\b(recycled|refill\w*|certified|carbon|plastic|%|compostable|b corp|fsc|organic)\b", re.I)
+    gift_framing = re.compile(r"\b(gift|gifting|give|treat someone)\b", re.I)
 
     def check(self, ctx: LintContext) -> list[LintIssue]:
         text = f"{ctx.draft.headline} {ctx.draft.body} {ctx.draft.cta}"
         issues = []
         for phrase in ctx.persona.disinterested_in:
-            pattern = self._patterns.get(phrase.lower())
-            if pattern is None:
-                continue
-            match = pattern.search(text)
+            pattern = self.patterns.get(phrase.lower())
+            match = pattern.search(text) if pattern else None
             if match is None:
                 continue
-            if phrase == "vague eco claims" and self._specific_eco.search(text):
+            if phrase == "vague eco claims" and self.specific_eco.search(text):
                 continue
-            if phrase == "subscription-only" and self._gift_framing.search(text):
+            if phrase == "subscription-only" and self.gift_framing.search(text):
                 continue
-            issues.append(_hard(self.name, f"'{match.group(0)}' trips {ctx.persona.name}'s "
-                                            f"disinterest in {phrase}"))
+            issues.append(hard(self.name, f"'{match.group(0)}' trips {ctx.persona.name}'s disinterest in {phrase}"))
         return issues
-
-
-class DuplicateHeadlineRule:
-    name = "duplicate_headline"
-
-    def check(self, ctx: LintContext) -> list[LintIssue]:
-        mine = ctx.draft.headline.strip().lower()
-        if any(mine == other.strip().lower() for other in ctx.other_headlines):
-            return [_soft(self.name, "headline duplicates another variant")]
-        return []
 
 
 class StyleRule:
     name = "style"
-    _caps_word = re.compile(r"\b[A-Z]{4,}\b")
+    caps_word = re.compile(r"\b[A-Z]{4,}\b")
 
     def check(self, ctx: LintContext) -> list[LintIssue]:
         text = f"{ctx.draft.headline} {ctx.draft.body}"
         issues = []
-        if len(self._caps_word.findall(text)) > 1:
-            issues.append(_soft(self.name, "more than one ALL-CAPS word"))
+        if len(self.caps_word.findall(text)) > 1:
+            issues.append(soft(self.name, "more than one ALL-CAPS word"))
         if text.count("!") > 1:
-            issues.append(_soft(self.name, "more than one exclamation mark"))
+            issues.append(soft(self.name, "more than one exclamation mark"))
         return issues
 
 
-DEFAULT_RULES: tuple[LintRule, ...] = (
-    LengthRule(), ClaimsRule(), PersonaDisinterestRule(), DuplicateHeadlineRule(), StyleRule(),
-)
+DEFAULT_RULES: tuple[LintRule, ...] = (LengthRule(), ClaimsRule(), PersonaDisinterestRule(), StyleRule())
 
 
 class CreativeLinter:
@@ -148,9 +126,9 @@ class CreativeLinter:
         return not any(issue.severity is LintSeverity.HARD for issue in issues)
 
 
-def _hard(rule: str, message: str) -> LintIssue:
+def hard(rule: str, message: str) -> LintIssue:
     return LintIssue(severity=LintSeverity.HARD, rule=rule, message=message)
 
 
-def _soft(rule: str, message: str) -> LintIssue:
+def soft(rule: str, message: str) -> LintIssue:
     return LintIssue(severity=LintSeverity.SOFT, rule=rule, message=message)
