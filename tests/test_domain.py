@@ -24,6 +24,7 @@ from app.enums import (
     Verdict,
 )
 from app.prompts.loader import PromptError
+from app.schemas import ClarificationRequest
 from tests.helpers import create_match_output, create_sample_brief, create_sample_creative
 
 
@@ -192,13 +193,14 @@ class TestPlanner:
 # ---------------------------------------------------------------- prompts
 
 PROMPT_VARIABLES = {
-    "intake": {"categories": "a", "attributes": "b", "description": "We sell dog food."},
-    "match_publishers": {"catalog": [], "brief": {}, "signals": [], "publisher_count": "20"},
+    "triage": {"description": "We sell dog food."},
+    "intake": {"categories": "a", "attributes": "b"},
+    "clarify": {},
+    "match_publishers": {"catalog": [], "brief": {}, "publisher_count": "20"},
     "select_personas": {"personas": [], "persona_cap": "5", "brief": {}, "recommended": []},
-    "write_creative": {"brief": {}, "persona": {}, "angle": "a", "watchouts": "w", "target_publishers": "p", "feedback": ""},
+    "write_creative": {"brief": {}, "persona": {}, "angle": "a", "watchouts": "w", "target_publishers": "p"},
     "campaign_summary": {"plan": {}},
     "validation_retry": {"errors": "- missing"},
-    "lint_retry": {"issues": "- too long"},
 }
 
 
@@ -210,7 +212,7 @@ class TestPrompts:
 
     def test_missing_variable_raises(self, prompts):
         with pytest.raises(PromptError):
-            prompts.render("intake", categories="a", attributes="b")
+            prompts.render("intake", categories="a")
 
 
 # ---------------------------------------------------------------- heuristic intake
@@ -229,7 +231,11 @@ EXPECTED_READING = {
 
 @pytest.mark.parametrize("number", sorted(EXPECTED_READING))
 async def test_heuristic_intake_reads_each_sample_advertiser(catalog, number):
-    executor = HeuristicStageExecutor(catalog, SignalCalculator(catalog))
+    executor = HeuristicStageExecutor(catalog, SignalCalculator(catalog), CreativeLinter())
     example = next(e for e in catalog.examples if e.number == number)
-    brief = (await executor.intake(example.description)).output
-    assert (brief.input_quality, brief.product_category) == EXPECTED_READING[number]
+    output = (await executor.intake(executor.new_context(example.description), None)).output
+    quality, category = EXPECTED_READING[number]
+    if quality is InputQuality.INSUFFICIENT:
+        assert isinstance(output, ClarificationRequest) and output.questions
+    else:
+        assert (output.input_quality, output.product_category) == (quality, category)

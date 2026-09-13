@@ -25,6 +25,12 @@ class Settings(BaseSettings):
     summary_stage_enabled: bool = True
     tracing_enabled: bool = True  # OpenAI Agents SDK traces, visible in the OpenAI dashboard
 
+    # conversation memory (OpenAI Agents SDK sessions): one SQLite row set per session_id
+    sessions_db: Path = ROOT_DIR / "sessions.db"
+    session_history_limit: int = 20
+    # give the summary agent OpenAI's hosted, sandboxed code interpreter for its arithmetic
+    code_interpreter_enabled: bool = False
+
     frontend_origin: str = "http://localhost:5173"  # comma-separated allowlist (CORS)
     data_dir: Path = ROOT_DIR / "data"
     prompts_dir: Path = ROOT_DIR / "prompts"

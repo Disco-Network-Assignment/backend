@@ -2,16 +2,18 @@
 
 Used without an API key and in tests, so the whole pipeline runs end to end offline. It is a
 template engine driven by small tables: every reason it writes points at a number in the data
-pack, and the trace labels the run as heuristic."""
+pack, and the trace labels the run as heuristic. It implements the same StageExecutor contract
+as the LLM version, including the shared RunContext."""
 
 import re
 import time
 from dataclasses import dataclass
 
+from app.agents.context import RunContext
 from app.agents.openai_agent import StageRun
 from app.domain.catalog import CatalogRepository
 from app.domain.categories import terms_for
-from app.domain.creative_checks import BODY_MAX, CTA_MAX, HEADLINE_MAX
+from app.domain.creative_checks import BODY_MAX, CTA_MAX, HEADLINE_MAX, CreativeLinter
 from app.domain.fit_signals import SignalCalculator, age_overlap_pct
 from app.enums import (
     BrandAttribute,
@@ -28,6 +30,7 @@ from app.enums import (
 from app.schemas import (
     AdvertiserBrief,
     CampaignSummary,
+    ClarificationRequest,
     CreativeDraft,
     FitSignals,
     Interpretation,
@@ -101,6 +104,8 @@ FEMALE_WORDS = re.compile(r"\b(women|woman|female|moms?|mothers?|her)\b", re.I)
 MALE_WORDS = re.compile(r"\b(men|man|male|dads?|fathers?)\b", re.I)
 AUDIENCE_PHRASE = re.compile(r"\b((?:targeting|for) [a-z][^.;]{6,70})", re.I)
 VAGUE_MAX_WORDS = 8
+INCOME_BY_TIER = {PriceTier.LUXURY: IncomeTier.HIGH, PriceTier.PREMIUM: IncomeTier.MID_HIGH,
+                  PriceTier.BUDGET: IncomeTier.MID}
 
 # ---------------------------------------------------------------- persona and copy tables
 
@@ -155,16 +160,26 @@ class Reading:
 class HeuristicStageExecutor:
     mode = ExecutionMode.HEURISTIC
 
-    def __init__(self, catalog: CatalogRepository, signals: SignalCalculator) -> None:
+    def __init__(self, catalog: CatalogRepository, signals: SignalCalculator, linter: CreativeLinter) -> None:
         self._catalog = catalog
         self._signals = signals
+        self._linter = linter
+
+    def new_context(self, description: str) -> RunContext:
+        return RunContext(catalog=self._catalog, signals=self._signals, linter=self._linter,
+                          description=description)
 
     # ---------------------------------------------------------------- stage 1: intake
-    async def intake(self, description: str) -> StageRun[AdvertiserBrief]:
+    async def intake(self, ctx: RunContext, session_id: str | None) -> StageRun:
         started = time.perf_counter()
-        text = description.strip()
+        text = ctx.description.strip()
         reading = read(text)
         quality = classify(text, reading)
+        if quality is InputQuality.INSUFFICIENT:
+            clarification = ClarificationRequest(
+                reason="The description does not say what is sold or to whom.",
+                questions=["What exactly do you sell, and to whom?", "What does a typical order cost?"])
+            return StageRun(clarification, self._meta(Stage.INTAKE, started, agent="clarifier"))
         category = reading.primary or ProductCategory.OTHER
         assumptions = [f"Read the product as '{category}' from the wording (heuristic mode).",
                        f"Purchase model read as {reading.purchase_model}."]
@@ -185,18 +200,22 @@ class HeuristicStageExecutor:
             is_consumer_commerce=category is not ProductCategory.B2B_SOFTWARE,
             input_quality=quality,
             confidence=confidence_of(quality, reading),
-            assumptions=assumptions if quality is not InputQuality.INSUFFICIENT else [],
+            assumptions=assumptions,
             clarifying_questions=questions_for(quality, reading),
             interpretations=interpretations_for(quality, text),
         )
-        return StageRun(brief, self._meta(Stage.INTAKE, started))
+        return StageRun(brief, self._meta(Stage.INTAKE, started, agent="brief_writer"))
 
     # ---------------------------------------------------------------- stage 2: match
-    async def match(self, brief: AdvertiserBrief, signals: list[FitSignals]) -> StageRun[MatchOutput]:
+    async def match(self, ctx: RunContext) -> StageRun:
         started = time.perf_counter()
-        price = self._signals.price_point(brief)
-        drafts = [self._assess(brief, s, price) for s in signals]
-        return StageRun(MatchOutput(assessments=drafts), self._meta(Stage.MATCH, started))
+        assert ctx.brief is not None
+        price = self._signals.price_point(ctx.brief)
+        drafts = []
+        for publisher in self._catalog.publishers:
+            signals = ctx.fit_signals.get(publisher.id) or self._signals.compute(ctx.brief, publisher)
+            drafts.append(self._assess(ctx.brief, signals, price))
+        return StageRun(MatchOutput(assessments=drafts), self._meta(Stage.MATCH, started, agent="publisher_matcher"))
 
     def _assess(self, brief: AdvertiserBrief, s: FitSignals, price: float) -> PublisherAssessmentDraft:
         publisher = self._catalog.publisher(s.publisher_id)
@@ -257,8 +276,10 @@ class HeuristicStageExecutor:
         return [t for t in (*terms.direct, *terms.adjacent) if t in publisher_terms] or [publisher.category]
 
     # ---------------------------------------------------------------- stage 3: personas
-    async def select_personas(self, brief: AdvertiserBrief, recommended, persona_cap: int) -> StageRun[PersonaSelectionDraft]:
+    async def select_personas(self, ctx: RunContext, persona_cap: int) -> StageRun:
         started = time.perf_counter()
+        brief = ctx.brief
+        assert brief is not None
         terms = set(terms_for(brief.product_category).persona)
         for category in brief.secondary_categories:
             terms.update(terms_for(category).persona)
@@ -267,11 +288,11 @@ class HeuristicStageExecutor:
         cap = max(1, persona_cap)
         chosen = [pair for pair in scored if pair[0] >= 45][:cap] or scored[: min(3, cap)]
         chosen_ids = {p.id for _, p in chosen}
-        selected = [self._pick(brief, p, score, terms, recommended) for score, p in chosen]
+        selected = [self._pick(brief, p, score, terms, ctx.recommended) for score, p in chosen]
         rejected = [RejectedPersonaDraft(persona_id=p.id, why_not=why_not(brief, p, terms))
                     for _, p in scored if p.id not in chosen_ids]
         return StageRun(PersonaSelectionDraft(selected=selected, rejected=rejected),
-                        self._meta(Stage.PERSONAS, started))
+                        self._meta(Stage.PERSONAS, started, agent="persona_strategist"))
 
     def _pick(self, brief: AdvertiserBrief, persona: ShopperPersona, score: float, terms: set[str],
               recommended) -> PersonaPickDraft:
@@ -292,27 +313,24 @@ class HeuristicStageExecutor:
             watchouts=watchouts, best_publishers=best)
 
     # ---------------------------------------------------------------- stage 4: creative
-    async def write_creative(self, brief: AdvertiserBrief, pick: PersonaPickDraft, persona: ShopperPersona,
-                             target_publishers: list[str], feedback: list[str]) -> StageRun[CreativeDraft]:
+    async def write_creative(self, ctx: RunContext, pick: PersonaPickDraft, persona: ShopperPersona,
+                             target_publishers: list[str]) -> StageRun:
         started = time.perf_counter()
+        brief = ctx.brief
+        assert brief is not None
         preference = persona.messaging_preferences[0]
         hook, clause, cta = COPY_BY_PREFERENCE.get(preference, DEFAULT_COPY)
         product = brief.product_category.replace("_", " ").title()
-        if feedback:  # the retry keeps the angle but strips anything the review flagged
-            headline, body = f"{product}, made for you", brief.business_summary
-        else:
-            headline, body = f"{product}: {hook}", f"{brief.business_summary} {clause}"
-        reasoning = f"Heuristic template: led with '{preference}' and avoided '{persona.disinterested_in[0]}'"
-        if feedback:
-            reasoning += f"; rewritten after review: {'; '.join(feedback)}"
         draft = CreativeDraft(
-            headline=truncate(headline, HEADLINE_MAX), body=truncate(body, BODY_MAX),
-            cta=truncate(cta, CTA_MAX), alt_headline=truncate(f"{hook} - {product}", HEADLINE_MAX),
-            persona_reasoning=f"{reasoning}.")
-        return StageRun(draft, self._meta(Stage.CREATIVE, started))
+            headline=truncate(f"{product}: {hook}", HEADLINE_MAX),
+            body=truncate(f"{brief.business_summary} {clause}", BODY_MAX),
+            cta=truncate(cta, CTA_MAX),
+            alt_headline=truncate(f"{hook} - {product}", HEADLINE_MAX),
+            persona_reasoning=f"Heuristic template: led with '{preference}' and avoided '{persona.disinterested_in[0]}'.")
+        return StageRun(draft, self._meta(Stage.CREATIVE, started, agent=f"copywriter_{persona.id}"))
 
     # ---------------------------------------------------------------- stage 5: summary
-    async def summarize(self, plan: dict) -> StageRun[CampaignSummary]:
+    async def summarize(self, ctx: RunContext, plan: dict) -> StageRun:
         started = time.perf_counter()
         names = [a["publisher_name"] for a in plan.get("allocation", [])]
         personas = [p["persona_name"] for p in plan.get("personas", [])]
@@ -324,19 +342,16 @@ class HeuristicStageExecutor:
         risks = [*plan.get("open_questions", [])[:3],
                  "Heuristic mode: reasons are template-generated from the data pack; run with an OpenAI key "
                  "for model judgement."]
-        return StageRun(CampaignSummary(strategy_summary=summary, risks=risks), self._meta(Stage.SUMMARY, started))
+        return StageRun(CampaignSummary(strategy_summary=summary, risks=risks),
+                        self._meta(Stage.SUMMARY, started, agent="strategy_summariser"))
 
     @staticmethod
-    def _meta(stage: Stage, started: float) -> StageMeta:
+    def _meta(stage: Stage, started: float, agent: str) -> StageMeta:
         return StageMeta(stage=stage, ms=round((time.perf_counter() - started) * 1000),
-                         mode=ExecutionMode.HEURISTIC)
+                         mode=ExecutionMode.HEURISTIC, agent=agent)
 
 
 # -------------------------------------------------------------------- intake helpers
-
-INCOME_BY_TIER = {PriceTier.LUXURY: IncomeTier.HIGH, PriceTier.PREMIUM: IncomeTier.MID_HIGH,
-                  PriceTier.BUDGET: IncomeTier.MID}
-
 
 def read(text: str) -> Reading:
     matched = [c for c, pattern in CATEGORY_PATTERNS if re.search(pattern, text, re.I)]
@@ -382,22 +397,20 @@ def classify(text: str, reading: Reading) -> InputQuality:
 
 
 def confidence_of(quality: InputQuality, reading: Reading) -> float:
-    if quality is InputQuality.INSUFFICIENT:
-        return 0.1
     if quality in (InputQuality.VAGUE, InputQuality.AMBIGUOUS):
         return 0.35
     if quality is InputQuality.OFF_CATALOG:
         return 0.5
-    stated = 0.55 + (0.15 if reading.price is not None else 0) \
-        + (0.1 if reading.purchase_model is not PurchaseModel.ONE_TIME else 0) + 0.1
+    stated = 0.65 + (0.15 if reading.price is not None else 0) \
+        + (0.1 if reading.purchase_model is not PurchaseModel.ONE_TIME else 0)
     return round(min(stated, 0.9), 2)
 
 
 def questions_for(quality: InputQuality, reading: Reading) -> list[str]:
     questions = []
-    if quality in (InputQuality.VAGUE, InputQuality.AMBIGUOUS, InputQuality.INSUFFICIENT):
+    if quality in (InputQuality.VAGUE, InputQuality.AMBIGUOUS):
         questions.append("What exactly do you sell, and to whom?")
-    if reading.price is None and quality is not InputQuality.INSUFFICIENT:
+    if reading.price is None:
         questions.append("What does a typical order cost?")
     if quality is InputQuality.OFF_CATALOG:
         questions.append("Which consumer shoppers, if any, buy this product?")

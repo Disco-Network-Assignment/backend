@@ -47,9 +47,9 @@ class CaseResult:
 
 def grade(case: EvalCase, plan: CampaignPlan | None, stop: StopResult | None) -> list[CheckResult]:
     checks: list[CheckResult] = []
-    brief = plan.brief if plan else stop.brief if stop else None
-    checks.append(CheckResult("quality", brief is not None and brief.input_quality in case.quality,
-                              str(brief.input_quality) if brief else "no brief"))
+    if plan is not None:
+        checks.append(CheckResult("quality", plan.brief.input_quality in case.quality,
+                                  str(plan.brief.input_quality)))
     checks.append(CheckResult("stopped", (stop is not None) == case.stopped,
                               "stopped" if stop else "ran"))
     if plan is None:

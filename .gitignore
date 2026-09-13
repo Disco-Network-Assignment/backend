@@ -8,3 +8,4 @@ build/
 dist/
 .env
 evals/results/
+sessions.db*

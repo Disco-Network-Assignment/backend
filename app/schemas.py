@@ -138,6 +138,19 @@ class AdvertiserBrief(BaseModel):
         return not self.is_consumer_commerce or self.input_quality is InputQuality.OFF_CATALOG
 
 
+class ClarificationRequest(BaseModel):
+    """What the clarify agent returns when there is nothing to plan with."""
+
+    reason: str = Field(description="One plain sentence: why a plan cannot be made from this text.")
+    questions: list[str] = Field(description="2-3 questions whose answers would let planning start.")
+
+
+class HandoffReason(BaseModel):
+    """The one-line justification the triage agent attaches to a handoff."""
+
+    reason: str
+
+
 # ---------------------------------------------------------------------------- stage 2: match
 
 
@@ -258,7 +271,7 @@ class LintIssue(BaseModel):
 class LintReport(BaseModel):
     passed: bool
     issues: list[LintIssue]
-    retried: bool
+    self_checks: int = Field(default=0, description="How often the copywriter called check_creative.")
 
     @property
     def hard_issues(self) -> list[LintIssue]:
@@ -371,11 +384,14 @@ class StageMeta(BaseModel):
     stage: Stage
     ms: int
     mode: ExecutionMode
+    agent: str | None = None
     model: str | None = None
     reasoning_effort: str | None = None
     prompt_version: str | None = None
     input_tokens: int | None = None
     output_tokens: int | None = None
+    tool_calls: int = 0
+    handoffs: int = 0
     retried: bool = False
 
 
@@ -402,7 +418,6 @@ class StopResult(BaseModel):
     run_id: str
     description: str
     mode: ExecutionMode
-    brief: AdvertiserBrief
     reason: str
     clarifying_questions: list[str]
     examples: list[str]
@@ -421,6 +436,10 @@ class PlanOptions(BaseModel):
     )
     mode: ExecutionMode | None = Field(
         default=None, description="Override the server's execution mode for this run."
+    )
+    session_id: str | None = Field(
+        default=None, max_length=64,
+        description="Conversation memory key: runs with the same id build on each other's turns.",
     )
 
 

@@ -40,13 +40,14 @@ def create_pipeline(mode: ExecutionMode, config: Settings | None = None,
     prompts = prompts or get_prompts()
     signals = SignalCalculator(catalog)
     guard = AssessmentGuard(catalog)
+    linter = CreativeLinter()
     executor: StageExecutor
     if mode is ExecutionMode.HEURISTIC:
-        executor = HeuristicStageExecutor(catalog, signals)
+        executor = HeuristicStageExecutor(catalog, signals, linter)
     else:
-        executor = LlmStageExecutor(AgentFactory(config), StructuredRunner(config, prompts),
-                                    prompts, catalog, guard)
-    return CampaignPipeline(executor, catalog, signals, guard, InputPolicy(), CreativeLinter(),
+        executor = LlmStageExecutor(config, AgentFactory(config), StructuredRunner(config, prompts),
+                                    prompts, catalog, guard, signals, linter)
+    return CampaignPipeline(executor, catalog, signals, guard, InputPolicy(), linter,
                             ConfigBuilder(catalog), summary_enabled=config.summary_stage_enabled)
 
 

@@ -52,8 +52,7 @@ class TestMessyInput:
         events = await collect(pipeline, "idk just try it")
         assert [e.stage for e in events][-1] is Stage.STOPPED
         stop = StopResult.model_validate(events[-1].data)
-        assert stop.brief.input_quality is InputQuality.INSUFFICIENT
-        assert stop.clarifying_questions and len(stop.examples) == 15
+        assert stop.reason and stop.clarifying_questions and len(stop.examples) == 15
 
     async def test_vague_input_continues_with_a_small_pilot(self, pipeline, catalog):
         response = await pipeline.run(PlanRequest(description=example(catalog, 5)))

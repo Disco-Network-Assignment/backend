@@ -25,28 +25,50 @@ against `evals/cases.py` in whichever mode is configured.
 ## How it works
 
 ```
-POST /api/plan ─▶ intake ─▶ router ─▶ signals ─▶ match ─▶ guards ─▶ personas ─▶ creatives ─▶ config ─▶ summary
-   (NDJSON)       LLM       code      code       LLM      code       LLM       LLM ×N + lint  code      LLM
+POST /api/plan ─▶ triage ─▶ router ─▶ signals ─▶ match ─▶ guards ─▶ personas ─▶ creatives ─▶ config ─▶ summary
+   (NDJSON)      agents     code      code       agent    code       agent      agent ×N       code      agent
+              (handoffs)                       (+tool)              (+tool)     (+tool, lint)          (+sandbox)
 ```
 
-- **Intake** (agent) turns free text into an `AdvertiserBrief`: controlled category, price tier,
-  purchase model, attributes, target customer, and an `input_quality` flag with assumptions,
-  clarifying questions and interpretations. Advertiser text is wrapped as data, never as an
-  instruction.
+- **Intake** (agents + handoffs) starts with a `triage` agent that hands off to either the
+  `brief_writer`, which returns an `AdvertiserBrief` (controlled category, price tier, purchase
+  model, attributes, target customer, `input_quality`, assumptions, questions, interpretations),
+  or the `clarifier`, which returns a `ClarificationRequest`. The handoff carries a typed reason.
+  A `SQLiteSession` keyed by the browser's session id gives the conversation memory, so a refined
+  description builds on earlier turns. Advertiser text is wrapped as data, never as an instruction.
 - **Router** (code) decides the consequence: junk stops the run, vague/ambiguous input continues
   with a 3-persona cap and a smaller pilot, off-catalog input continues but is expected to end
   with nothing recommended.
 - **Signals** (code) compute per-publisher evidence the model must not "vibe": taxonomy category
   overlap, age/gender/income alignment, the post-purchase AOV ratio, reach, note keyword hits.
-- **Match** (agent) scores all 20 publishers against a rubric with the signals as evidence;
+- **Match** (agent + tool) scores all 20 publishers against a rubric, calling the `fit_signals`
+  function tool for the computed evidence on any publisher it is unsure about;
   **guards** (code) enforce completeness, caps for off-catalog and price mismatches, verdict/score
   consistency and a bounded recommended set, tagging every rule that fired.
-- **Personas** (agent) pick 3-5 with a messaging angle each and reject the rest with a reason;
-  **creatives** run one agent call per persona in parallel, then a lint pass (lengths,
-  unsubstantiated claims, persona disinterests) with one regeneration.
+- **Personas** (agent + tool) pick 3-5 with a messaging angle each and reject the rest with a
+  reason, using `audience_overlap` to ground `best_publishers`; **creatives** run one copywriter
+  agent per persona in parallel, each calling `check_creative` (the lint rules as a tool) on its own
+  draft before finalising. Code lints the final copy once more and reports the verdict.
 - **Config** (code) assembles targeting, fit-weighted allocation with floor/cap, CPM bands, CPA
   target, confidence-scaled pilot budget, KPIs and a forecast; every constant used is echoed into
-  `assumptions`. The optional **summary** agent writes the reviewer narrative.
+  `assumptions`. The optional **summary** agent writes the reviewer narrative and can be given the
+  hosted `CodeInterpreterTool` sandbox (`CODE_INTERPRETER_ENABLED=true`) for its arithmetic.
+
+### How the OpenAI Agents SDK is used
+
+| SDK primitive | Where | Why |
+|---|---|---|
+| `Agent[RunContext]` with `output_type` | every stage (`agents/openai_agent.py`) | typed outputs, parsed by the SDK, validated by code |
+| Handoffs (`handoff(..., input_type=HandoffReason, on_handoff=...)`) | intake triage → brief_writer / clarifier | the routing decision is a first-class, traceable agent transfer |
+| Function tools (`@function_tool`, `RunContextWrapper`) | `fit_signals`, `audience_overlap`, `check_creative` (`agents/tools.py`) | deterministic evidence and the lint rules are callable by the model instead of pasted in |
+| Local context (`RunContext`, `agents/context.py`) | all stages | catalog, computed signals, the brief and the current persona travel with the run, never through the prompt |
+| Sessions (`SQLiteSession` + `SessionSettings(limit)`) | intake | memory across turns of one browser session, bounded history |
+| Hosted sandbox (`CodeInterpreterTool`) | summary, opt-in | model-run Python in OpenAI's sandbox for forecast arithmetic |
+| `RunConfig(workflow_name, tracing)` + `result.new_items` / `raw_responses` | runner | trace names, tool-call and handoff counts, token usage per stage |
+
+Sandbox *agents* (`agents.sandbox`, a Unix-local or Docker workspace the agent edits files in)
+are not used: this pipeline has no filesystem work, and the hosted code interpreter covers the
+only compute the summary needs.
 
 Without an API key the same pipeline runs a deterministic `heuristic` executor built from the
 signals, so the app is clickable and the whole flow is testable end to end; the trace says which
@@ -61,10 +83,11 @@ app/
   enums.py          domain vocabularies (StrEnum)
   schemas.py        contracts: catalog rows, stage hand-offs (*Draft = agent output), API shapes
   dependencies.py   composition root (create_pipeline, PipelineProvider)
-  pipeline.py       the workflow: stage order, event protocol, creative fan-out, lint retry
+  pipeline.py       the workflow: stage order, event protocol, creative fan-out, final lint
   routes/           plan (stream + run), examples (the sample advertisers)
-  agents/           openai_agent (build + run one SDK call, one retry) · llm_stages (the stage
-                    questions asked of the model) · heuristic_stages (keyless, deterministic)
+  agents/           context (RunContext shared by tools and agents) · tools (function tools) ·
+                    openai_agent (AgentFactory + StructuredRunner: run, validate, one retry) ·
+                    llm_stages (agents, handoffs, sessions per stage) · heuristic_stages (keyless)
   domain/           categories · fit_signals · guardrails · economics · budget_split ·
                     creative_checks · input_policy · config_builder
   prompts/loader    loads prompts/*.md ({{var}} templating, versioned)
