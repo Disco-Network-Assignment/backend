@@ -5,10 +5,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
-from app.config import settings
 from app.dependencies import get_catalog, get_pipeline_provider, get_prompts
 from app.routes import examples, plan
 from app.schemas import HealthResponse
+from app.settings import settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)

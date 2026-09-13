@@ -11,10 +11,10 @@ from agents.usage import Usage
 from openai.types.responses import ResponseOutputMessage, ResponseOutputText
 from pydantic import BaseModel
 
-from app.agents.runner import StructuredRunner
+from app.agents.openai_agent import StructuredRunner
 from app.enums import FailureKind, Stage
 from app.errors import StageError
-from app.prompts.registry import RenderedPrompt
+from app.prompts.loader import RenderedPrompt
 
 
 class Reply(BaseModel):

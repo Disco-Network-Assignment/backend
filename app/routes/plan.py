@@ -7,7 +7,7 @@ from fastapi.responses import StreamingResponse
 from app.dependencies import PipelineProvider, get_pipeline_provider
 from app.enums import FailureKind
 from app.errors import StageError
-from app.pipeline.orchestrator import CampaignPipeline
+from app.pipeline import CampaignPipeline
 from app.schemas import PlanRequest, PlanResponse
 
 router = APIRouter(prefix="/api/plan", tags=["plan"])

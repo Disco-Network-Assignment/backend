@@ -17,10 +17,10 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from app.config import ROOT_DIR
 from app.dependencies import create_pipeline, get_catalog, settings
 from app.enums import ExecutionMode
 from app.schemas import CampaignPlan, PlanRequest, StopResult
+from app.settings import ROOT_DIR
 from evals.cases import CASES, EvalCase
 
 RESULTS_DIR = ROOT_DIR / "evals" / "results"

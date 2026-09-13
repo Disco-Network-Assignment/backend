@@ -4,12 +4,12 @@ object that carries no API key, whatever the developer's .env says."""
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.config import ROOT_DIR, Settings
 from app.dependencies import PipelineProvider, create_pipeline, get_pipeline_provider
 from app.domain.catalog import CatalogRepository, load_catalog
 from app.enums import ExecutionMode
 from app.main import app
-from app.prompts.registry import PromptRegistry
+from app.prompts.loader import PromptLoader
+from app.settings import ROOT_DIR, Settings
 
 
 @pytest.fixture(scope="session")
@@ -24,8 +24,8 @@ def catalog() -> CatalogRepository:
 
 
 @pytest.fixture(scope="session")
-def prompts() -> PromptRegistry:
-    return PromptRegistry(ROOT_DIR / "prompts")
+def prompts() -> PromptLoader:
+    return PromptLoader(ROOT_DIR / "prompts")
 
 
 @pytest.fixture(scope="session")

@@ -21,7 +21,7 @@ class RouteDecision:
     confidence_multiplier: float = 1.0
 
 
-class InputRouter:
+class InputPolicy:
     _JUNK = re.compile(r"^(test|testing|asdf|idk|hello|hi|hey|\.+|\?+|-+)$", re.I)
     MIN_WORDS = 3
     STOP_REASON = ("The description does not say what is sold or to whom, so there is nothing "

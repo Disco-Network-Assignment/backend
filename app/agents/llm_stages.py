@@ -2,17 +2,16 @@
 
 A StageExecutor answers the judgement questions: what is this advertiser, which publishers fit,
 which personas, what should the copy say, plus the optional summary. The pipeline never touches
-the SDK directly, which is what lets the same pipeline run without a key (agents/heuristic.py)
+the SDK directly, which is what lets the same pipeline run without a key (agents/heuristic_stages.py)
 and be tested end to end."""
 
 from typing import Protocol
 
-from app.agents.factory import AgentFactory
-from app.agents.runner import StageRun, StructuredRunner
+from app.agents.openai_agent import AgentFactory, StageRun, StructuredRunner
 from app.domain.catalog import CatalogRepository
-from app.domain.guards import AssessmentGuard
+from app.domain.guardrails import AssessmentGuard
 from app.enums import BrandAttribute, ExecutionMode, ProductCategory, Stage
-from app.prompts.registry import PromptRegistry
+from app.prompts.loader import PromptLoader
 from app.schemas import (
     AdvertiserBrief,
     CampaignSummary,
@@ -51,7 +50,7 @@ class LlmStageExecutor:
 
     mode = ExecutionMode.LLM
 
-    def __init__(self, factory: AgentFactory, runner: StructuredRunner, prompts: PromptRegistry,
+    def __init__(self, factory: AgentFactory, runner: StructuredRunner, prompts: PromptLoader,
                  catalog: CatalogRepository, guard: AssessmentGuard) -> None:
         self._factory = factory
         self._runner = runner

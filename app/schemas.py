@@ -142,7 +142,7 @@ class AdvertiserBrief(BaseModel):
 
 
 class FitSignals(BaseModel):
-    """Deterministic fit evidence per publisher, computed by code (see domain/signals.py)."""
+    """Deterministic fit evidence per publisher, computed by code (see domain/fit_signals.py)."""
 
     publisher_id: str
     category_overlap: float

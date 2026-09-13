@@ -3,14 +3,14 @@ planner, the prompt registry, and the heuristic intake over the 15 sample advert
 
 import pytest
 
-from app.agents.heuristic import HeuristicStageExecutor
-from app.domain.allocation import AllocationCandidate, BudgetAllocator
+from app.agents.heuristic_stages import HeuristicStageExecutor
+from app.domain.budget_split import AllocationCandidate, BudgetAllocator
+from app.domain.config_builder import ConfigBuilder
+from app.domain.creative_checks import CreativeLinter, LintContext
 from app.domain.economics import DEFAULT_ECONOMICS
-from app.domain.guards import AssessmentGuard
-from app.domain.lint import CreativeLinter, LintContext
-from app.domain.planner import CampaignPlanner
-from app.domain.router import InputRouter
-from app.domain.signals import SignalCalculator, age_overlap_pct, aov_fit, category_overlap
+from app.domain.fit_signals import SignalCalculator, age_overlap_pct, aov_fit, category_overlap
+from app.domain.guardrails import AssessmentGuard
+from app.domain.input_policy import InputPolicy
 from app.enums import (
     BidModel,
     ConfigStatus,
@@ -23,7 +23,7 @@ from app.enums import (
     PurchaseModel,
     Verdict,
 )
-from app.prompts.registry import PromptError
+from app.prompts.loader import PromptError
 from tests.helpers import create_match_output, create_sample_brief, create_sample_creative
 
 
@@ -160,12 +160,12 @@ class TestLint:
 
 class TestRouter:
     def test_junk_and_insufficient_stop(self):
-        router = InputRouter()
+        router = InputPolicy()
         assert router.is_trivially_insufficient("idk") and not router.is_trivially_insufficient("We sell dog food")
         assert router.route(create_sample_brief(input_quality=InputQuality.INSUFFICIENT)).stop
 
     def test_vague_continues_with_caveats(self):
-        decision = InputRouter().route(create_sample_brief(input_quality=InputQuality.VAGUE))
+        decision = InputPolicy().route(create_sample_brief(input_quality=InputQuality.VAGUE))
         assert not decision.stop and decision.persona_cap == 3 and decision.confidence_multiplier == 0.7
 
 
@@ -174,7 +174,7 @@ class TestPlanner:
         scores = {p.id: 30.0 for p in catalog.publishers}
         scores.update(top)
         rows = AssessmentGuard(catalog).apply(create_match_output(scores), signals_for(catalog, brief), brief)
-        return CampaignPlanner(catalog).build(brief, rows, None, [], InputRouter().route(brief))
+        return ConfigBuilder(catalog).build(brief, rows, None, [], InputPolicy().route(brief))
 
     def test_draft_allocation_and_cpa_bidding(self, catalog):
         config = self.build(catalog, create_sample_brief(), {"pub_007": 94, "pub_009": 89, "pub_018": 81})

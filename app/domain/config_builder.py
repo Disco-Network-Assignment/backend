@@ -2,11 +2,11 @@
 number in the config can be traced to a score, a catalog field, or a constant in economics.py,
 and the constants used are echoed into `assumptions` so the reviewer sees them."""
 
-from app.domain.allocation import AllocationCandidate, BudgetAllocator
+from app.domain.budget_split import AllocationCandidate, BudgetAllocator
 from app.domain.catalog import CatalogRepository
 from app.domain.economics import DEFAULT_ECONOMICS, Economics
-from app.domain.router import RouteDecision
-from app.domain.signals import parse_range
+from app.domain.fit_signals import parse_range
+from app.domain.input_policy import RouteDecision
 from app.enums import (
     BidModel,
     ConfigStatus,
@@ -34,7 +34,7 @@ from app.schemas import (
 )
 
 
-class CampaignPlanner:
+class ConfigBuilder:
     def __init__(self, catalog: CatalogRepository, economics: Economics = DEFAULT_ECONOMICS,
                  allocator: BudgetAllocator | None = None) -> None:
         self._catalog = catalog

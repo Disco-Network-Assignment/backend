@@ -13,13 +13,13 @@ import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
-from app.agents.executor import StageExecutor
+from app.agents.llm_stages import StageExecutor
 from app.domain.catalog import CatalogRepository
-from app.domain.guards import AssessmentGuard
-from app.domain.lint import CreativeLinter, LintContext
-from app.domain.planner import CampaignPlanner
-from app.domain.router import InputRouter, RouteDecision
-from app.domain.signals import SignalCalculator
+from app.domain.config_builder import ConfigBuilder
+from app.domain.creative_checks import CreativeLinter, LintContext
+from app.domain.fit_signals import SignalCalculator
+from app.domain.guardrails import AssessmentGuard
+from app.domain.input_policy import InputPolicy, RouteDecision
 from app.enums import (
     ConfigStatus,
     EventStatus,
@@ -81,8 +81,8 @@ class PipelineContext:
 
 class CampaignPipeline:
     def __init__(self, executor: StageExecutor, catalog: CatalogRepository,
-                 signal_calculator: SignalCalculator, guard: AssessmentGuard, router: InputRouter,
-                 linter: CreativeLinter, planner: CampaignPlanner,
+                 signal_calculator: SignalCalculator, guard: AssessmentGuard, router: InputPolicy,
+                 linter: CreativeLinter, planner: ConfigBuilder,
                  summary_enabled: bool = True) -> None:
         self._executor = executor
         self._catalog = catalog

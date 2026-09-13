@@ -42,7 +42,7 @@ class RenderedPrompt:
     input: str                # the user message
 
 
-class PromptRegistry:
+class PromptLoader:
     def __init__(self, prompts_dir: Path) -> None:
         self._dir = prompts_dir
         self._templates: dict[str, PromptTemplate] = {}

@@ -57,16 +57,17 @@ mode ran.
 ```
 app/
   main.py           FastAPI app (lifespan warms catalog + prompts), CORS, /health
-  config.py         pydantic-settings: models (matcher vs the rest), effort, mode, timeouts
+  settings.py       pydantic-settings: models (matcher vs the rest), effort, mode, timeouts
   enums.py          domain vocabularies (StrEnum)
   schemas.py        contracts: catalog rows, stage hand-offs (*Draft = agent output), API shapes
   dependencies.py   composition root (create_pipeline, PipelineProvider)
+  pipeline.py       the workflow: stage order, event protocol, creative fan-out, lint retry
   routes/           plan (stream + run), examples (the sample advertisers)
-  pipeline/         orchestrator: the workflow, event protocol, creative fan-out
-  agents/           factory (SDK Agent per stage) · runner (structured output, validation,
-                    one retry, usage) · executor (StageExecutor contract + LLM impl) · heuristic
-  domain/           taxonomy · signals · guards · economics · allocation · lint · router · planner
-  prompts/registry  loads prompts/*.md ({{var}} templating, versioned)
+  agents/           openai_agent (build + run one SDK call, one retry) · llm_stages (the stage
+                    questions asked of the model) · heuristic_stages (keyless, deterministic)
+  domain/           categories · fit_signals · guardrails · economics · budget_split ·
+                    creative_checks · input_policy · config_builder
+  prompts/loader    loads prompts/*.md ({{var}} templating, versioned)
 prompts/            every prompt the system uses (see prompts/README.md)
 evals/              cases + runner; tests/ pytest (unit, pipeline, API, fake-model runner)
 ```

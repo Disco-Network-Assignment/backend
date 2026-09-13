@@ -10,8 +10,8 @@ import re
 from dataclasses import dataclass
 
 from app.domain.catalog import CatalogRepository
+from app.domain.categories import terms_for
 from app.domain.economics import DEFAULT_ECONOMICS, Economics
-from app.domain.taxonomy import terms_for
 from app.enums import BrandAttribute, GenderSkew, IncomeTier, PriceTier
 from app.schemas import AdvertiserBrief, FitSignals, Publisher
 

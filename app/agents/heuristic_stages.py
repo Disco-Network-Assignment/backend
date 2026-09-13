@@ -8,11 +8,11 @@ import re
 import time
 from dataclasses import dataclass
 
-from app.agents.runner import StageRun
+from app.agents.openai_agent import StageRun
 from app.domain.catalog import CatalogRepository
-from app.domain.lint import BODY_MAX, CTA_MAX, HEADLINE_MAX
-from app.domain.signals import SignalCalculator, age_overlap_pct
-from app.domain.taxonomy import terms_for
+from app.domain.categories import terms_for
+from app.domain.creative_checks import BODY_MAX, CTA_MAX, HEADLINE_MAX
+from app.domain.fit_signals import SignalCalculator, age_overlap_pct
 from app.enums import (
     BrandAttribute,
     ExecutionMode,

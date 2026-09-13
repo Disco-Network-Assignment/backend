@@ -1,8 +1,10 @@
-"""Runs one stage agent and returns typed output plus timings and token usage.
+"""The OpenAI Agents SDK layer: build one agent for a stage, run it once, get typed output.
 
-One retry is allowed: when the output does not fit the schema, or the stage's business check
-rejects it, the errors are quoted back to the model once. Provider and SDK failures are mapped
-to a FailureKind so the API can stream a typed `failed` event."""
+`AgentFactory` decides HOW an agent is configured (model per stage, reasoning effort, output
+schema, the shared client). `StructuredRunner` makes the call and owns the single retry: when
+the output does not fit the schema, or the stage's business check rejects it, the errors are
+quoted back to the model once. Provider and SDK failures are mapped to a FailureKind so the API
+can stream a typed `failed` event."""
 
 import asyncio
 import logging
@@ -11,7 +13,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Generic, TypeVar
 
-from agents import Agent, RunConfig, Runner
+from agents import (
+    Agent,
+    ModelSettings,
+    RunConfig,
+    Runner,
+    set_default_openai_client,
+    set_tracing_disabled,
+)
 from agents.exceptions import (
     AgentsException,
     MaxTurnsExceeded,
@@ -19,20 +28,21 @@ from agents.exceptions import (
     ModelRefusalError,
     ModelTimeoutError,
 )
-from openai import APIConnectionError, APIError, APITimeoutError, RateLimitError
+from openai import APIConnectionError, APIError, APITimeoutError, AsyncOpenAI, RateLimitError
+from openai.types.shared import Reasoning
 from pydantic import BaseModel
 
-from app.config import Settings
 from app.enums import ExecutionMode, FailureKind, Stage
 from app.errors import StageError
-from app.prompts.registry import PromptRegistry, RenderedPrompt
+from app.prompts.loader import PromptLoader, RenderedPrompt
 from app.schemas import StageMeta
+from app.settings import Settings
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
 
-# exception -> (kind, message); order matters, first match wins
+# exception -> (kind, message); first match wins
 FAILURES: tuple[tuple[type[BaseException] | tuple[type[BaseException], ...], FailureKind, str], ...] = (
     (ModelRefusalError, FailureKind.REFUSAL, "the model declined this request"),
     ((ModelTimeoutError, APITimeoutError, TimeoutError), FailureKind.TIMEOUT, "the model call timed out"),
@@ -43,6 +53,43 @@ FAILURES: tuple[tuple[type[BaseException] | tuple[type[BaseException], ...], Fai
 )
 
 
+class AgentFactory:
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
+        self._client: AsyncOpenAI | None = None
+
+    def model_for(self, stage: Stage) -> str:
+        s = self._settings
+        return s.openai_match_model if stage is Stage.MATCH else s.openai_model
+
+    def effort_for(self, stage: Stage) -> str:
+        s = self._settings
+        return s.match_reasoning_effort if stage is Stage.MATCH else s.reasoning_effort
+
+    def build(self, stage: Stage, instructions: str, output_type: type[BaseModel]) -> Agent:
+        self._ensure_client()
+        return Agent(
+            name=f"disco-{stage}",
+            instructions=instructions,
+            model=self.model_for(stage),
+            model_settings=ModelSettings(
+                reasoning=Reasoning(effort=self.effort_for(stage)),
+                verbosity="low",
+                max_tokens=self._settings.llm_max_output_tokens,
+                timeout=self._settings.llm_timeout_s,
+            ),
+            output_type=output_type,
+        )
+
+    def _ensure_client(self) -> None:
+        """One client per process so every run shares the connection pool."""
+        if self._client is None:
+            self._client = AsyncOpenAI(api_key=self._settings.openai_api_key or None)
+            set_default_openai_client(self._client, use_for_tracing=self._settings.tracing_enabled)
+            if not self._settings.tracing_enabled:
+                set_tracing_disabled(True)
+
+
 @dataclass(frozen=True)
 class StageRun(Generic[T]):
     output: T
@@ -50,7 +97,7 @@ class StageRun(Generic[T]):
 
 
 class StructuredRunner:
-    def __init__(self, settings: Settings, prompts: PromptRegistry) -> None:
+    def __init__(self, settings: Settings, prompts: PromptLoader) -> None:
         self._settings = settings
         self._prompts = prompts
 

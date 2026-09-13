@@ -44,7 +44,7 @@ class IncomeTier(StrEnum):
 
 class ProductCategory(StrEnum):
     """Controlled vocabulary the intake agent maps every advertiser onto. The taxonomy
-    (domain/taxonomy.py) bridges each value to publisher subcategories and persona
+    (domain/categories.py) bridges each value to publisher subcategories and persona
     affinities, which is what makes deterministic category signals possible."""
 
     PET_FOOD = "pet_food"

@@ -4,20 +4,19 @@ FastAPI `Depends`, so a test can swap any piece with `app.dependency_overrides`.
 import logging
 from functools import lru_cache
 
-from app.agents.executor import LlmStageExecutor, StageExecutor
-from app.agents.factory import AgentFactory
-from app.agents.heuristic import HeuristicStageExecutor
-from app.agents.runner import StructuredRunner
-from app.config import Settings, settings
+from app.agents.heuristic_stages import HeuristicStageExecutor
+from app.agents.llm_stages import LlmStageExecutor, StageExecutor
+from app.agents.openai_agent import AgentFactory, StructuredRunner
 from app.domain.catalog import CatalogRepository, load_catalog
-from app.domain.guards import AssessmentGuard
-from app.domain.lint import CreativeLinter
-from app.domain.planner import CampaignPlanner
-from app.domain.router import InputRouter
-from app.domain.signals import SignalCalculator
+from app.domain.config_builder import ConfigBuilder
+from app.domain.creative_checks import CreativeLinter
+from app.domain.fit_signals import SignalCalculator
+from app.domain.guardrails import AssessmentGuard
+from app.domain.input_policy import InputPolicy
 from app.enums import ExecutionMode
-from app.pipeline.orchestrator import CampaignPipeline
-from app.prompts.registry import PromptRegistry
+from app.pipeline import CampaignPipeline
+from app.prompts.loader import PromptLoader
+from app.settings import Settings, settings
 
 logger = logging.getLogger(__name__)
 
@@ -28,13 +27,13 @@ def get_catalog() -> CatalogRepository:
 
 
 @lru_cache
-def get_prompts() -> PromptRegistry:
-    return PromptRegistry(settings().prompts_dir)
+def get_prompts() -> PromptLoader:
+    return PromptLoader(settings().prompts_dir)
 
 
 def create_pipeline(mode: ExecutionMode, config: Settings | None = None,
                     catalog: CatalogRepository | None = None,
-                    prompts: PromptRegistry | None = None) -> CampaignPipeline:
+                    prompts: PromptLoader | None = None) -> CampaignPipeline:
     """Factory for any context (routes, evals, tests)."""
     config = config or settings()
     catalog = catalog or get_catalog()
@@ -47,8 +46,8 @@ def create_pipeline(mode: ExecutionMode, config: Settings | None = None,
     else:
         executor = LlmStageExecutor(AgentFactory(config), StructuredRunner(config, prompts),
                                     prompts, catalog, guard)
-    return CampaignPipeline(executor, catalog, signals, guard, InputRouter(), CreativeLinter(),
-                            CampaignPlanner(catalog), summary_enabled=config.summary_stage_enabled)
+    return CampaignPipeline(executor, catalog, signals, guard, InputPolicy(), CreativeLinter(),
+                            ConfigBuilder(catalog), summary_enabled=config.summary_stage_enabled)
 
 
 class PipelineProvider:
