@@ -83,13 +83,14 @@ executor instead.
 
 ```
 app/
-  main.py           FastAPI app (lifespan warms catalog + prompts), CORS, /health
+  main.py           FastAPI app (lifespan warms catalog + prompts, creates the runs table), CORS, /health
+  db.py             the one Postgres engine; runs.py  run history (RunStore: save, list, get)
   settings.py       pydantic-settings: models (matcher vs the rest), effort, mode, timeouts
   enums.py          domain vocabularies (StrEnum)
   schemas.py        contracts: catalog rows, stage hand-offs (*Draft = agent output), API shapes
   dependencies.py   composition root (create_pipeline, get_pipeline: 503 without a key)
   pipeline.py       the workflow: stage order, event protocol, creative fan-out, final lint
-  routes/           plan (stream + run), examples (the sample advertisers)
+  routes/           plan (stream + run), examples (the sample advertisers), runs (history: list + get)
   agents/           context (RunContext shared by tools and agents) · tools (function tools) ·
                     memory (Postgres session store) ·
                     openai_agent (AgentFactory + StructuredRunner: run, validate, one retry) ·

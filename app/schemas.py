@@ -8,6 +8,7 @@ sees fields it is not supposed to fill, and code never trusts fields the model p
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -467,3 +468,35 @@ class HealthResponse(BaseModel):
     status: Literal["ok"] = "ok"
     llm_configured: bool = Field(description="False when OPENAI_API_KEY is missing; runs will 503.")
     version: str
+
+
+# ---------------------------------------------------------------------------- run history
+
+
+class RunError(BaseModel):
+    stage: Stage
+    kind: FailureKind
+    message: str
+
+
+class RunSummary(BaseModel):
+    """One row of the history list: enough to recognise a run without loading its plan."""
+
+    run_id: str
+    created_at: datetime
+    session_id: str | None
+    description: str
+    status: Literal["done", "stopped", "failed"]
+    input_quality: InputQuality | None
+    recommended: int
+    personas: int
+    creatives: int
+    budget_usd: float
+
+
+class RunRecord(RunSummary):
+    """The stored run: exactly one of plan, stopped or error is set, matching `status`."""
+
+    plan: CampaignPlan | None = None
+    stopped: StopResult | None = None
+    error: RunError | None = None

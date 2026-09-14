@@ -8,6 +8,7 @@ from app.domain.catalog import CatalogRepository
 from app.domain.fit_signals import SignalCalculator
 from app.enums import (
     BrandAttribute,
+    FailureKind,
     GenderSkew,
     IncomeTier,
     InputQuality,
@@ -17,6 +18,7 @@ from app.enums import (
     Stage,
     Verdict,
 )
+from app.errors import StageError
 from app.schemas import (
     AdvertiserBrief,
     CampaignSummary,
@@ -27,6 +29,8 @@ from app.schemas import (
     PersonaSelectionDraft,
     PublisherAssessmentDraft,
     RejectedPersonaDraft,
+    RunRecord,
+    RunSummary,
     ShopperPersona,
     StageMeta,
     Subscores,
@@ -97,12 +101,14 @@ class ScriptedExecutor:
 
     def __init__(self, catalog: CatalogRepository, brief: AdvertiserBrief | None = None,
                  clarification: ClarificationRequest | None = None,
-                 picks: tuple[str, ...] = ("persona_004", "persona_001", "persona_002")) -> None:
+                 picks: tuple[str, ...] = ("persona_004", "persona_001", "persona_002"),
+                 fail_at: Stage | None = None) -> None:
         self.catalog = catalog
         self.signals = SignalCalculator(catalog)
         self.brief = brief or create_sample_brief()
         self.clarification = clarification
         self.picks = picks
+        self.fail_at = fail_at  # raise a provider-style failure when this stage is reached
         self.calls: list[Stage] = []
 
     def new_context(self, description: str) -> RunContext:
@@ -140,5 +146,29 @@ class ScriptedExecutor:
 
     def _run(self, stage: Stage, output, agent: str, tool_calls: int = 0, handoffs: int = 0) -> StageRun:
         self.calls.append(stage)
+        if stage is self.fail_at:
+            raise StageError(stage, FailureKind.API, "scripted provider failure")
         return StageRun(output, StageMeta(stage=stage, ms=1, agent=agent, model="scripted", prompt_version="test",
                                           input_tokens=10, output_tokens=5, tool_calls=tool_calls, handoffs=handoffs))
+
+
+class MemoryRunStore:
+    """The run history kept in a list: the RunStore contract without a database."""
+
+    def __init__(self) -> None:
+        self.records: list[RunRecord] = []
+
+    async def save(self, record: RunRecord) -> None:
+        self.records = [r for r in self.records if r.run_id != record.run_id]
+        self.records.append(record)
+
+    async def list(self, limit: int = 20) -> list[RunSummary]:
+        newest_first = sorted(self.records, key=lambda r: r.created_at, reverse=True)
+        return [RunSummary.model_validate(r.model_dump()) for r in newest_first[:limit]]
+
+    async def get(self, run_id: str) -> RunRecord | None:
+        for record in self.records:
+            if record.run_id == run_id:
+                return record
+        return None
+

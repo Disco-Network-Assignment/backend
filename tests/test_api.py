@@ -61,3 +61,23 @@ class TestReadOnly:
         monkeypatch.setattr(main, "settings", lambda: Settings(openai_api_key="k", _env_file=None))
         body = (await client.get("/health")).json()
         assert body["status"] == "ok" and body["llm_configured"] is True
+
+
+class TestRunHistory:
+    async def test_runs_are_listed_newest_first_and_loadable(self, client):
+        first = (await client.post("/api/plan/run", json={"description": SENIOR_DOG_FOOD})).json()["plan"]
+        second = (await client.post("/api/plan/run", json={"description": SENIOR_DOG_FOOD + " Also cats."})).json()["plan"]
+
+        listing = (await client.get("/api/runs")).json()
+        assert [r["run_id"] for r in listing] == [second["run_id"], first["run_id"]]
+        assert listing[0]["status"] == "done" and listing[0]["recommended"] == 3 and "plan" not in listing[0]
+
+        record = (await client.get(f"/api/runs/{first['run_id']}")).json()
+        assert record["plan"]["run_id"] == first["run_id"] and record["stopped"] is None
+
+    async def test_unknown_run_is_404(self, client):
+        assert (await client.get("/api/runs/nope")).status_code == 404
+
+    async def test_limit_is_validated(self, client):
+        assert (await client.get("/api/runs?limit=0")).status_code == 422
+

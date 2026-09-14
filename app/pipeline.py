@@ -24,6 +24,7 @@ from app.domain.guardrails import AssessmentGuard
 from app.domain.input_policy import InputPolicy, RouteDecision
 from app.enums import ConfigStatus, EventStatus, FailureKind, Stage, Verdict
 from app.errors import StageError
+from app.runs import RunStore, new_record
 from app.schemas import (
     AdvertiserBrief,
     CampaignConfig,
@@ -41,6 +42,7 @@ from app.schemas import (
     PlanResponse,
     PublisherAssessment,
     RejectedPersona,
+    RunError,
     StageMeta,
     StopResult,
 )
@@ -81,6 +83,9 @@ class RunState:
     creatives: list[CreativeVariant] = field(default_factory=list)
     config: CampaignConfig | None = None
     summary: CampaignSummary | None = None
+    # the terminal outcome, whichever one happened
+    plan: CampaignPlan | None = None
+    stop: StopResult | None = None
 
     @property
     def recommended(self) -> list[PublisherAssessment]:
@@ -99,7 +104,8 @@ class RunState:
 class CampaignPipeline:
     def __init__(self, executor: StageExecutor, catalog: CatalogRepository,
                  signal_calculator: SignalCalculator, guard: AssessmentGuard, policy: InputPolicy,
-                 config_builder: ConfigBuilder, summary_enabled: bool = True):
+                 config_builder: ConfigBuilder, summary_enabled: bool = True,
+                 store: RunStore | None = None):
         self.executor = executor            # answers the judgement questions (the agents)
         self.catalog = catalog
         self.signals = signal_calculator
@@ -107,6 +113,7 @@ class CampaignPipeline:
         self.policy = policy
         self.config_builder = config_builder
         self.summary_enabled = summary_enabled
+        self.store = store                  # run history; None means nothing is kept
 
     # ---- public API ----
 
@@ -123,14 +130,43 @@ class CampaignPipeline:
         log.info("[PIPELINE] run=%s start", state.run_id)
         try:
             async for event in self._run_stages(state):
+                # store the outcome before the client hears about it, so a history refresh
+                # triggered by the terminal event already sees this run
+                if event.stage in (Stage.DONE, Stage.STOPPED):
+                    await self._save_history(state)
                 yield event
         except StageError as e:
             log.warning("[PIPELINE] run=%s stage=%s failed (%s): %s", state.run_id, e.stage, e.kind, e.message)
+            await self._save_history(state, RunError(stage=e.stage, kind=e.kind, message=e.message))
             yield PipelineEvent(stage=e.stage, status=EventStatus.FAILED, kind=e.kind, message=e.message)
         except Exception as e:  # noqa: BLE001 - the stream must end with a typed event, whatever broke
             log.exception("[PIPELINE] run=%s unexpected failure", state.run_id)
-            yield PipelineEvent(stage=Stage.ERROR, status=EventStatus.FAILED, kind=FailureKind.UNKNOWN,
-                                message=f"unexpected error: {e}")
+            error = RunError(stage=Stage.ERROR, kind=FailureKind.UNKNOWN, message=f"unexpected error: {e}")
+            await self._save_history(state, error)
+            yield PipelineEvent(stage=error.stage, status=EventStatus.FAILED, kind=error.kind, message=error.message)
+
+    async def _save_history(self, state: RunState, error: RunError | None = None):
+        """Record the outcome (plan, stop or failure) so the dashboard can list and reload it."""
+        if self.store is None:
+            return
+        record = new_record(state.run_id, state.request.description, state.request.options.session_id)
+        if state.plan is not None:
+            record.status = "done"
+            record.plan = state.plan
+            record.input_quality = state.plan.brief.input_quality
+            record.recommended = len(state.plan.recommended)
+            record.personas = len(state.plan.personas.selected) if state.plan.personas else 0
+            record.creatives = len(state.plan.creatives)
+            record.budget_usd = state.plan.config.budget.total_usd
+        elif state.stop is not None:
+            record.status = "stopped"
+            record.stopped = state.stop
+        else:
+            record.status = "failed"
+            record.error = error
+            if state.brief is not None:
+                record.input_quality = state.brief.input_quality
+        await self.store.save(record)
 
     async def run(self, request: PlanRequest) -> PlanResponse:
         """The same run without streaming: the last event decides the outcome."""
@@ -220,6 +256,7 @@ class CampaignPipeline:
             publishers=state.assessments, personas=state.personas, creatives=state.creatives,
             config=state.config, summary=state.summary, trace=state.trace,
         )
+        state.plan = plan
         log.info("[PIPELINE] run=%s done recommended=%d creatives=%d status=%s", state.run_id,
                  len(state.recommended), len(state.creatives), state.config.status)
         yield PipelineEvent(stage=Stage.DONE, status=EventStatus.COMPLETED, data=as_json(plan))
@@ -231,6 +268,7 @@ class CampaignPipeline:
             clarifying_questions=questions or DEFAULT_CLARIFYING_QUESTIONS,
             examples=self.catalog.example_descriptions(), trace=state.trace,
         )
+        state.stop = stop
         return PipelineEvent(stage=Stage.STOPPED, status=EventStatus.COMPLETED, data=as_json(stop))
 
     # ---- personas ----

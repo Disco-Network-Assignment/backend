@@ -4,12 +4,12 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.dependencies import create_pipeline, get_pipeline
+from app.dependencies import create_pipeline, get_pipeline, get_run_store
 from app.domain.catalog import CatalogRepository, load_catalog
 from app.main import app
 from app.prompts.loader import PromptLoader
 from app.settings import ROOT_DIR, Settings
-from tests.helpers import ScriptedExecutor
+from tests.helpers import MemoryRunStore, ScriptedExecutor
 
 
 @pytest.fixture(scope="session")
@@ -33,13 +33,19 @@ def executor(catalog) -> ScriptedExecutor:
 
 
 @pytest.fixture
-def pipeline(test_settings, catalog, prompts, executor):
-    return create_pipeline(test_settings, catalog, prompts, executor)
+def run_store() -> MemoryRunStore:
+    return MemoryRunStore()
 
 
 @pytest.fixture
-async def client(pipeline):
+def pipeline(test_settings, catalog, prompts, executor, run_store):
+    return create_pipeline(test_settings, catalog, prompts, executor, run_store)
+
+
+@pytest.fixture
+async def client(pipeline, run_store):
     app.dependency_overrides[get_pipeline] = lambda: pipeline
+    app.dependency_overrides[get_run_store] = lambda: run_store
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as http:
         yield http

@@ -25,12 +25,12 @@ from app.schemas import (
     StopResult,
     TargetCustomer,
 )
-from tests.helpers import SENIOR_DOG_FOOD, ScriptedExecutor, create_sample_brief
+from tests.helpers import SENIOR_DOG_FOOD, MemoryRunStore, ScriptedExecutor, create_sample_brief
 
 
-def make_pipeline(catalog, executor: ScriptedExecutor) -> CampaignPipeline:
+def make_pipeline(catalog, executor: ScriptedExecutor, store: MemoryRunStore | None = None) -> CampaignPipeline:
     return CampaignPipeline(executor, catalog, SignalCalculator(catalog), AssessmentGuard(catalog), InputPolicy(),
-                            ConfigBuilder(catalog))
+                            ConfigBuilder(catalog), store=store)
 
 
 async def collect(pipeline, description=SENIOR_DOG_FOOD, **options):
@@ -133,3 +133,32 @@ def off_catalog_brief():
     return create_sample_brief(business_summary="B2B SaaS for dental practices.",
                                product_category=ProductCategory.B2B_SOFTWARE, secondary_categories=[],
                                is_consumer_commerce=False, input_quality=InputQuality.OFF_CATALOG, confidence=0.4)
+
+
+class TestHistory:
+    async def test_a_finished_plan_is_stored_with_its_summary_numbers(self, pipeline, run_store):
+        response = await pipeline.run(PlanRequest(description=SENIOR_DOG_FOOD, options=PlanOptions(session_id="s1")))
+        assert len(run_store.records) == 1
+        record = run_store.records[0]
+        assert record.run_id == response.plan.run_id and record.status == "done"
+        assert record.session_id == "s1" and record.input_quality is InputQuality.CLEAR
+        assert (record.recommended, record.personas, record.creatives) == (3, 3, 3)
+        assert record.budget_usd == response.plan.config.budget.total_usd and record.plan == response.plan
+        assert (await run_store.list())[0].run_id == record.run_id
+
+    async def test_a_stopped_run_is_stored_too(self, catalog):
+        store = MemoryRunStore()
+        clarification = ClarificationRequest(reason="Nothing says what is sold.", questions=["What do you sell?"])
+        await make_pipeline(catalog, ScriptedExecutor(catalog, clarification=clarification), store).run(
+            PlanRequest(description="idk"))
+        assert store.records[0].status == "stopped" and store.records[0].stopped.reason == clarification.reason
+
+    async def test_a_failed_run_is_stored_with_the_error(self, catalog):
+        store = MemoryRunStore()
+        pipeline = make_pipeline(catalog, ScriptedExecutor(catalog, fail_at=Stage.MATCH), store)
+        events = await collect(pipeline)
+        assert events[-1].status is EventStatus.FAILED
+        record = store.records[0]
+        assert record.status == "failed" and record.error.stage is Stage.MATCH
+        assert record.input_quality is InputQuality.CLEAR  # intake had finished before the failure
+

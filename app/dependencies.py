@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from app.agents.llm_stages import LlmStageExecutor, StageExecutor
 from app.agents.memory import SessionStore
 from app.agents.openai_agent import AgentFactory, StructuredRunner
+from app.db import Database
 from app.domain.catalog import CatalogRepository, load_catalog
 from app.domain.config_builder import ConfigBuilder
 from app.domain.fit_signals import SignalCalculator
@@ -15,6 +16,7 @@ from app.domain.guardrails import AssessmentGuard
 from app.domain.input_policy import InputPolicy
 from app.pipeline import CampaignPipeline
 from app.prompts.loader import PromptLoader
+from app.runs import PostgresRunStore, RunStore
 from app.settings import Settings, settings
 
 NO_KEY_MESSAGE = "OPENAI_API_KEY is not set; the agents cannot run. Add it to backend/.env and restart."
@@ -31,15 +33,27 @@ def get_prompts() -> PromptLoader:
 
 
 @lru_cache
-def get_memory() -> SessionStore:
+def get_database() -> Database:
     """One Postgres engine per process; the app's lifespan closes it on shutdown."""
-    return SessionStore(settings().database_url)
+    return Database(settings().database_url)
+
+
+@lru_cache
+def get_memory() -> SessionStore:
+    return SessionStore(get_database())
+
+
+@lru_cache
+def get_run_store() -> PostgresRunStore:
+    return PostgresRunStore(get_database())
 
 
 def create_pipeline(config: Settings | None = None, catalog: CatalogRepository | None = None,
                     prompts: PromptLoader | None = None,
-                    executor: StageExecutor | None = None) -> CampaignPipeline:
-    """Factory for any context. Routes and evals use the SDK executor; tests pass a scripted one."""
+                    executor: StageExecutor | None = None,
+                    store: RunStore | None = None) -> CampaignPipeline:
+    """Factory for any context. Routes and evals use the SDK executor; tests pass a scripted one.
+    Without a `store` the run is not kept in the history."""
     config = config or settings()
     catalog = catalog or get_catalog()
     prompts = prompts or get_prompts()
@@ -49,12 +63,12 @@ def create_pipeline(config: Settings | None = None, catalog: CatalogRepository |
         executor = LlmStageExecutor(config, AgentFactory(config), StructuredRunner(config, prompts),
                                     get_memory(), prompts, catalog, guard, signals)
     return CampaignPipeline(executor, catalog, signals, guard, InputPolicy(), ConfigBuilder(catalog),
-                            summary_enabled=config.summary_stage_enabled)
+                            summary_enabled=config.summary_stage_enabled, store=store)
 
 
 @lru_cache
 def _pipeline() -> CampaignPipeline:
-    return create_pipeline()
+    return create_pipeline(store=get_run_store())
 
 
 def get_pipeline() -> CampaignPipeline:
