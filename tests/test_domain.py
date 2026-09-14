@@ -184,7 +184,7 @@ class TestPrompts:
     @pytest.mark.parametrize("name", sorted(PROMPT_VARIABLES))
     def test_every_prompt_renders(self, prompts, name):
         rendered = prompts.render(name, **PROMPT_VARIABLES[name])
-        assert "{{" not in rendered.input and "{{" not in (rendered.instructions or "")
+        assert "{{" not in rendered.input and "{{" not in rendered.instructions
 
     def test_missing_variable_raises(self, prompts):
         with pytest.raises(PromptError):

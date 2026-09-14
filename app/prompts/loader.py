@@ -38,7 +38,7 @@ class PromptTemplate:
 class RenderedPrompt:
     name: str
     version: str
-    instructions: str | None  # the agent's system prompt
+    instructions: str         # the agent's system prompt; empty for fragments
     input: str                # the user message
 
 
@@ -78,7 +78,7 @@ class PromptLoader:
         return RenderedPrompt(
             name=template.name,
             version=template.version,
-            instructions=self._substitute(template.system, variables) if template.system else None,
+            instructions=self._substitute(template.system or "", variables),
             input=self._substitute(template.user, variables),
         )
 

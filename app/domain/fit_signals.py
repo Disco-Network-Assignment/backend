@@ -1,9 +1,19 @@
-"""Deterministic fit evidence per publisher - the numbers a model must not "vibe".
+"""Deterministic fit evidence per publisher: the numbers a model must not "vibe".
 
-Category overlap through the taxonomy, demographic overlap, income tier vs price tier, the
-post-purchase AOV ratio and reach. The matcher agent gets them as evidence (and reads the
-publishers' free-text notes itself), the UI shows them next to the model's reasons, and the
-guard uses the blended prior to flag a verdict that wildly disagrees with the data."""
+For one advertiser and one publisher, code computes:
+
+    category_overlap        same shelf (1.0), adjacent shelf (0.5) or unrelated (0.0)
+    age_overlap_pct         how much of the target age range the publisher's audience covers
+    gender_alignment        how well the publisher's gender split matches the target
+    income_price_alignment  publisher income tier vs the product's price tier
+    aov_ratio / aov_fit     product price vs the publisher's average order value
+    reach_index             monthly impressions on a 0-1 log scale within the catalog
+    prior                   a weighted blend of the above on a 0-100 scale
+
+The matcher agent gets these as evidence (it reads the publisher's free-text notes itself),
+the UI shows them next to the agent's reasons, and the guard flags a verdict that wildly
+disagrees with the prior.
+"""
 
 import math
 from dataclasses import dataclass
@@ -14,14 +24,27 @@ from app.domain.economics import DEFAULT_ECONOMICS, Economics
 from app.enums import GenderSkew, IncomeTier, PriceTier
 from app.schemas import AdvertiserBrief, FitSignals, Publisher
 
-AOV_SWEET_SPOT = (0.3, 2.5)  # price / AOV band in which post-purchase offers convert best
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
 
-_INCOME_RANK = {IncomeTier.MID: 1, IncomeTier.MID_HIGH: 2, IncomeTier.HIGH: 3}
-_PRICE_RANK = {PriceTier.BUDGET: 0, PriceTier.MID: 1, PriceTier.PREMIUM: 2, PriceTier.LUXURY: 3}
+# price / AOV band in which post-purchase offers convert best: a $30 add-on after a $100
+# basket is easy, a $600 product after a $40 basket is not
+AOV_SWEET_SPOT_LOW = 0.3
+AOV_SWEET_SPOT_HIGH = 2.5
+
+# neutral values when the brief does not say
+UNKNOWN_AGE_OVERLAP = 0.5
+UNKNOWN_GENDER_ALIGNMENT = 0.6
+
+INCOME_RANK = {IncomeTier.MID: 1, IncomeTier.MID_HIGH: 2, IncomeTier.HIGH: 3}
+PRICE_RANK = {PriceTier.BUDGET: 0, PriceTier.MID: 1, PriceTier.PREMIUM: 2, PriceTier.LUXURY: 3}
 
 
 @dataclass(frozen=True)
 class PriorWeights:
+    """How much each signal counts in the blended prior; they add up to 1."""
+
     category: float = 0.35
     age: float = 0.20
     gender: float = 0.10
@@ -29,102 +52,151 @@ class PriorWeights:
     aov: float = 0.20
 
 
+# ---------------------------------------------------------------------------
+# Individual signals (pure functions, unit-tested on their own)
+# ---------------------------------------------------------------------------
+
+
 def parse_range(text: str | None) -> tuple[int, int] | None:
     """'25-45' (or with an en dash) -> (25, 45); anything else is unknown."""
-    low, _, high = (text or "").replace("\u2013", "-").partition("-")
+    low, _, high = (text or "").replace("–", "-").partition("-")
     if low.strip().isdigit() and high.strip().isdigit():
         return int(low), int(high)
     return None
 
 
 def age_overlap_pct(target_range: str | None, publisher_range: str) -> float:
-    """Share of the advertiser's target range covered by the publisher's age skew.
-    An unknown target is neutral (0.5) rather than a penalty."""
+    """
+    Share of the advertiser's target age range covered by the publisher's audience.
+    Target 30-60 against a 25-45 audience: 15 of 30 years covered -> 0.5.
+    An unknown target is neutral (0.5) rather than a penalty.
+    """
     target = parse_range(target_range)
     publisher = parse_range(publisher_range)
     if target is None or publisher is None:
-        return 0.5
-    low, high = max(target[0], publisher[0]), min(target[1], publisher[1])
-    return round(max(0, high - low) / max(1, target[1] - target[0]), 2)
+        return UNKNOWN_AGE_OVERLAP
+
+    target_low, target_high = target
+    publisher_low, publisher_high = publisher
+    overlap_low = max(target_low, publisher_low)
+    overlap_high = min(target_high, publisher_high)
+    overlap_years = max(0, overlap_high - overlap_low)
+    target_years = max(1, target_high - target_low)
+    return round(overlap_years / target_years, 2)
 
 
 def gender_alignment(skew: GenderSkew, female_share: float) -> float:
+    """How well the publisher's audience (given as its female share) matches the target."""
     if skew is GenderSkew.FEMALE:
         return round(female_share, 2)
     if skew is GenderSkew.MALE:
         return round(1 - female_share, 2)
     if skew is GenderSkew.BALANCED:
+        # 1.0 at a 50/50 split, falling to 0 at 100/0
         return round(1 - abs(2 * female_share - 1), 2)
-    return 0.6  # unknown: mildly neutral
+    return UNKNOWN_GENDER_ALIGNMENT
 
 
 def income_price_alignment(income: IncomeTier, tier: PriceTier) -> float:
-    distance = abs(_INCOME_RANK[income] - _PRICE_RANK[tier])
+    """1.0 when the tiers line up, minus 0.3 for every tier of distance."""
+    distance = abs(INCOME_RANK[income] - PRICE_RANK[tier])
     return round(max(0.0, 1 - 0.3 * distance), 2)
 
 
 def aov_fit(ratio: float) -> float:
-    """1.0 inside the sweet spot, decaying outside it (5x -> 0.5, 10x -> 0.25)."""
-    low, high = AOV_SWEET_SPOT
-    if ratio < low:
-        return round(ratio / low, 2)
-    if ratio > high:
-        return round(high / ratio, 2)
+    """1.0 inside the sweet spot, decaying outside it (5x the basket -> 0.5, 10x -> 0.25)."""
+    if ratio < AOV_SWEET_SPOT_LOW:
+        return round(ratio / AOV_SWEET_SPOT_LOW, 2)
+    if ratio > AOV_SWEET_SPOT_HIGH:
+        return round(AOV_SWEET_SPOT_HIGH / ratio, 2)
     return 1.0
 
 
 def category_overlap(brief: AdvertiserBrief, publisher: Publisher) -> float:
-    """1.0 same shelf, 0.5 adjacent shelf, 0 unrelated; secondary categories count less."""
-    publisher_terms = {publisher.category, *publisher.subcategories}
+    """
+    1.0 same shelf, 0.5 adjacent shelf, 0 unrelated. The advertiser's secondary categories
+    count less (0.7 / 0.35) and only ever raise the result.
+    """
+    publisher_terms = set(publisher.subcategories)
+    publisher_terms.add(publisher.category)
 
-    def hit(candidates: tuple[str, ...]) -> bool:
-        return any(term in publisher_terms for term in candidates)
+    def publisher_has_any(terms: tuple[str, ...]) -> bool:
+        for term in terms:
+            if term in publisher_terms:
+                return True
+        return False
 
     primary = terms_for(brief.product_category)
-    score = 1.0 if hit(primary.direct) else 0.5 if hit(primary.adjacent) else 0.0
+    if publisher_has_any(primary.direct):
+        score = 1.0
+    elif publisher_has_any(primary.adjacent):
+        score = 0.5
+    else:
+        score = 0.0
+
     for category in brief.secondary_categories:
         secondary = terms_for(category)
-        if hit(secondary.direct):
+        if publisher_has_any(secondary.direct):
             score = max(score, 0.7)
-        elif hit(secondary.adjacent):
+        elif publisher_has_any(secondary.adjacent):
             score = max(score, 0.35)
     return score
 
 
+# ---------------------------------------------------------------------------
+# Calculator
+# ---------------------------------------------------------------------------
+
+
 class SignalCalculator:
     def __init__(self, catalog: CatalogRepository, economics: Economics = DEFAULT_ECONOMICS,
-                 weights: PriorWeights = PriorWeights()) -> None:
-        self._catalog = catalog
-        self._economics = economics
-        self._weights = weights
+                 weights: PriorWeights = PriorWeights()):
+        self.catalog = catalog
+        self.economics = economics
+        self.weights = weights
 
     def price_point(self, brief: AdvertiserBrief) -> float:
-        return self._economics.price_point(brief.estimated_price_point_usd, brief.price_tier)
+        """The stated price, or the tier default when the advertiser gave none."""
+        return self.economics.price_point(brief.estimated_price_point_usd, brief.price_tier)
 
     def compute(self, brief: AdvertiserBrief, publisher: Publisher) -> FitSignals:
-        ratio = self.price_point(brief) / publisher.avg_order_value_usd
-        low_log, high_log = self._catalog.log_reach_bounds
-        reach = (math.log10(publisher.monthly_impressions) - low_log) / max(high_log - low_log, 1e-9)
+        # --- price vs the publisher's basket ---
+        aov_ratio = self.price_point(brief) / publisher.avg_order_value_usd
+
+        # --- reach: where this publisher sits between the smallest and largest in the catalog ---
+        smallest_log, largest_log = self.catalog.log_reach_bounds
+        spread = max(largest_log - smallest_log, 1e-9)
+        reach = (math.log10(publisher.monthly_impressions) - smallest_log) / spread
+
+        # --- the individual signals ---
         category = category_overlap(brief, publisher)
         age = age_overlap_pct(brief.target_customer.age_range, publisher.audience.age_skew)
-        gender = gender_alignment(brief.target_customer.gender_skew,
-                                  publisher.audience.gender_split.female)
+        gender = gender_alignment(brief.target_customer.gender_skew, publisher.audience.gender_split.female)
         income = income_price_alignment(publisher.audience.income_tier, brief.price_tier)
-        aov = aov_fit(ratio)
-        w = self._weights
-        prior = 100 * (w.category * category + w.age * age + w.gender * gender
-                       + w.income * income + w.aov * aov)
+        aov = aov_fit(aov_ratio)
+
+        # --- the blended prior on a 0-100 scale ---
+        w = self.weights
+        prior = 100 * (w.category * category
+                       + w.age * age
+                       + w.gender * gender
+                       + w.income * income
+                       + w.aov * aov)
+
         return FitSignals(
             publisher_id=publisher.id,
             category_overlap=category,
             age_overlap_pct=age,
             gender_alignment=gender,
             income_price_alignment=income,
-            aov_ratio=round(ratio, 2),
+            aov_ratio=round(aov_ratio, 2),
             aov_fit=aov,
             reach_index=round(reach, 2),
             prior=round(prior),
         )
 
     def compute_all(self, brief: AdvertiserBrief) -> list[FitSignals]:
-        return [self.compute(brief, publisher) for publisher in self._catalog.publishers]
+        signals = []
+        for publisher in self.catalog.publishers:
+            signals.append(self.compute(brief, publisher))
+        return signals

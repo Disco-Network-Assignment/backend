@@ -131,12 +131,10 @@ class Objective(StrEnum):
     ACQUISITION = "acquisition"
     CONSIDERATION = "consideration"
     SEASONAL_GIFTING = "seasonal_gifting"
-    RETENTION = "retention"
 
 
 class BidModel(StrEnum):
     CPM = "CPM"
-    CPC = "CPC"
     CPA = "CPA"
 
 
