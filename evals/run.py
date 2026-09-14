@@ -1,12 +1,11 @@
 """Run the 15 sample advertisers through the pipeline and grade them against evals/cases.py.
 
-    python -m evals.run                  # mode from settings (llm when OPENAI_API_KEY is set)
-    python -m evals.run --mode heuristic # the keyless mode, ~1 s for all cases
+    python -m evals.run                  # needs OPENAI_API_KEY (backend/.env)
     python -m evals.run --only 1,7,15    # a subset
 
 Prints one row per case with an ok/XX per check, writes evals/results/<timestamp>.json (and
 latest.json), and exits non-zero when any check fails. Token counts come from the trace, so a
-run in LLM mode also reports what it cost in tokens."""
+run also reports what it cost in tokens."""
 
 import argparse
 import asyncio
@@ -18,7 +17,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from app.dependencies import create_pipeline, get_catalog, settings
-from app.enums import ExecutionMode
 from app.schemas import CampaignPlan, PlanRequest, StopResult
 from app.settings import ROOT_DIR
 from evals.cases import CASES, EvalCase
@@ -105,20 +103,18 @@ async def run_case(pipeline, case: EvalCase, description: str) -> CaseResult:
 
 async def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--mode", choices=[m.value for m in ExecutionMode], default=None)
     parser.add_argument("--only", help="comma-separated case numbers")
     args = parser.parse_args(argv)
 
-    mode = ExecutionMode(args.mode) if args.mode else settings().effective_mode
-    if mode is ExecutionMode.LLM and not settings().openai_api_key:
-        print("OPENAI_API_KEY is not set; running in heuristic mode", file=sys.stderr)
-        mode = ExecutionMode.HEURISTIC
+    if not settings().llm_configured:
+        print("OPENAI_API_KEY is not set; the evals run the real agents and need it", file=sys.stderr)
+        return 2
     only = {int(n) for n in args.only.split(",")} if args.only else None
-    pipeline = create_pipeline(mode)
+    pipeline = create_pipeline()
     examples = {e.number: e.description for e in get_catalog().examples}
 
     results: list[CaseResult] = []
-    print(f"mode={mode}  cases={len([c for c in CASES if not only or c.number in only])}\n")
+    print(f"model={settings().openai_model}  cases={len([c for c in CASES if not only or c.number in only])}\n")
     for case in CASES:
         if only and case.number not in only:
             continue
@@ -135,7 +131,7 @@ async def main(argv: list[str] | None = None) -> int:
     passed = sum(r.passed for r in results)
     print(f"\n{passed}/{len(results)} cases passed")
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    payload = {"mode": mode, "ran_at": datetime.now(UTC).isoformat(), "passed": passed,
+    payload = {"model": settings().openai_model, "ran_at": datetime.now(UTC).isoformat(), "passed": passed,
                "total": len(results), "results": [asdict(r) for r in results]}
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     for name in (f"{stamp}.json", "latest.json"):

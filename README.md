@@ -8,7 +8,7 @@ config**, streamed stage by stage. Orchestration is a typed pipeline over the Op
 ## Run it
 
 ```bash
-cp .env.example .env            # set OPENAI_API_KEY for LLM mode; leave empty for heuristic mode
+cp .env.example .env            # set OPENAI_API_KEY; every stage is an agent, so it is required
 uv venv && uv pip install -e ".[dev]"    # or: pip install -e ".[dev]"
 uvicorn app.main:app --reload   # http://localhost:8000/docs
 ```
@@ -18,9 +18,10 @@ curl -N localhost:8000/api/plan -H 'content-type: application/json' \
   -d '{"description":"We sell premium dog food for senior dogs. Grain-free, vet-formulated, subscription-based."}'
 ```
 
-`pytest` runs 85 hermetic tests in four files (domain rules, pipeline end to end, API, SDK runner
-against a fake model; no network). `python -m evals.run` grades the 15 sample advertisers
-against `evals/cases.py` in whichever mode is configured.
+`pytest` runs 58 hermetic tests in four files (domain rules, pipeline end to end against a
+scripted executor, API, SDK runner with tools and handoffs against a fake model; no network).
+`python -m evals.run` runs the real agents over the 15 sample advertisers and grades them
+against `evals/cases.py`.
 
 ## How it works
 
@@ -70,9 +71,10 @@ Sandbox *agents* (`agents.sandbox`, a Unix-local or Docker workspace the agent e
 are not used: this pipeline has no filesystem work, and the hosted code interpreter covers the
 only compute the summary needs.
 
-Without an API key the same pipeline runs a deterministic `heuristic` executor built from the
-signals, so the app is clickable and the whole flow is testable end to end; the trace says which
-mode ran.
+There is no keyword or regex fallback: understanding the advertiser is the agents' job, so an
+input no pattern anticipated is handled the same way as a familiar one. Without a key the API
+answers 503 with a message that says so, and the tests drive the pipeline with a scripted
+executor instead.
 
 ## Layout
 
@@ -82,17 +84,17 @@ app/
   settings.py       pydantic-settings: models (matcher vs the rest), effort, mode, timeouts
   enums.py          domain vocabularies (StrEnum)
   schemas.py        contracts: catalog rows, stage hand-offs (*Draft = agent output), API shapes
-  dependencies.py   composition root (create_pipeline, PipelineProvider)
+  dependencies.py   composition root (create_pipeline, get_pipeline: 503 without a key)
   pipeline.py       the workflow: stage order, event protocol, creative fan-out, final lint
   routes/           plan (stream + run), examples (the sample advertisers)
   agents/           context (RunContext shared by tools and agents) · tools (function tools) ·
                     openai_agent (AgentFactory + StructuredRunner: run, validate, one retry) ·
-                    llm_stages (agents, handoffs, sessions per stage) · heuristic_stages (keyless)
+                    llm_stages (agents, handoffs, sessions per stage)
   domain/           categories · fit_signals · guardrails · economics · budget_split ·
                     creative_checks · input_policy · config_builder
   prompts/loader    loads prompts/*.md ({{var}} templating, versioned)
 prompts/            every prompt the system uses (see prompts/README.md)
-evals/              cases + runner; tests/ pytest (unit, pipeline, API, fake-model runner)
+evals/              cases + runner (real agents); tests/ pytest (unit, scripted pipeline, API, fake-model runner)
 ```
 
 ## Config shape, and why
@@ -127,6 +129,6 @@ Easy: the UI plumbing, the JSON contracts, streaming, the allocation arithmetic.
 calibrated matching without ground truth (a model will happily rank by reach; the signals,
 guardrails and rubric anchors exist to stop that), copy that is persona-specific rather than
 merely plausible (angle-per-persona plus lint plus one retry), deciding when to ask versus
-assume (the router policy, tested case by case), and keeping the demo deterministic (the
-heuristic executor). The interesting work is the contract layer between model and code, the
+assume (the router policy, tested case by case), and testing an agent pipeline without paying
+for it (the scripted executor and the fake SDK model). The interesting work is the contract layer between model and code, the
 eval harness that measures it, and the outcome feedback loop that does not exist yet.

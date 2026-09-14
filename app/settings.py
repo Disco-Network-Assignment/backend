@@ -3,8 +3,6 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from app.enums import ExecutionMode
-
 # repo root (holds prompts/ and data/), independent of the cwd
 ROOT_DIR = Path(__file__).resolve().parent.parent
 
@@ -20,8 +18,6 @@ class Settings(BaseSettings):
     llm_timeout_s: float = 90.0
     llm_max_output_tokens: int = 8000
 
-    # "llm" needs OPENAI_API_KEY; without a key the app runs the deterministic "heuristic" mode
-    execution_mode: ExecutionMode = ExecutionMode.LLM
     summary_stage_enabled: bool = True
     tracing_enabled: bool = True  # OpenAI Agents SDK traces, visible in the OpenAI dashboard
 
@@ -40,10 +36,8 @@ class Settings(BaseSettings):
         return [o.strip() for o in self.frontend_origin.split(",") if o.strip()]
 
     @property
-    def effective_mode(self) -> ExecutionMode:
-        if self.execution_mode is ExecutionMode.LLM and not self.openai_api_key:
-            return ExecutionMode.HEURISTIC
-        return self.execution_mode
+    def llm_configured(self) -> bool:
+        return bool(self.openai_api_key)
 
 
 @lru_cache

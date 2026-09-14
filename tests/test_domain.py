@@ -1,9 +1,8 @@
 """The pure domain rules: fit signals, guardrails, allocation, economics, lint, routing, the
-planner, the prompt registry, and the heuristic intake over the 15 sample advertisers."""
+planner and the prompt registry."""
 
 import pytest
 
-from app.agents.heuristic_stages import HeuristicStageExecutor
 from app.domain.budget_split import AllocationCandidate, BudgetAllocator
 from app.domain.config_builder import ConfigBuilder
 from app.domain.creative_checks import CreativeLinter, LintContext
@@ -19,12 +18,10 @@ from app.enums import (
     InputQuality,
     LintSeverity,
     PriceTier,
-    ProductCategory,
     PurchaseModel,
     Verdict,
 )
 from app.prompts.loader import PromptError
-from app.schemas import ClarificationRequest
 from tests.helpers import create_match_output, create_sample_brief, create_sample_creative
 
 
@@ -160,10 +157,8 @@ class TestLint:
 # ---------------------------------------------------------------- router + planner
 
 class TestRouter:
-    def test_junk_and_insufficient_stop(self):
-        router = InputPolicy()
-        assert router.is_trivially_insufficient("idk") and not router.is_trivially_insufficient("We sell dog food")
-        assert router.route(create_sample_brief(input_quality=InputQuality.INSUFFICIENT)).stop
+    def test_insufficient_stops(self):
+        assert InputPolicy().route(create_sample_brief(input_quality=InputQuality.INSUFFICIENT)).stop
 
     def test_vague_continues_with_caveats(self):
         decision = InputPolicy().route(create_sample_brief(input_quality=InputQuality.VAGUE))
@@ -213,29 +208,3 @@ class TestPrompts:
     def test_missing_variable_raises(self, prompts):
         with pytest.raises(PromptError):
             prompts.render("intake", categories="a")
-
-
-# ---------------------------------------------------------------- heuristic intake
-
-EXPECTED_READING = {
-    1: (InputQuality.CLEAR, ProductCategory.PET_FOOD), 2: (InputQuality.CLEAR, ProductCategory.ACTIVEWEAR),
-    3: (InputQuality.CLEAR, ProductCategory.FUNCTIONAL_BEVERAGES), 4: (InputQuality.CLEAR, ProductCategory.HOME_DECOR_CANDLES),
-    5: (InputQuality.VAGUE, ProductCategory.WELLNESS_SERVICES), 6: (InputQuality.OFF_CATALOG, ProductCategory.OUTDOOR_GEAR),
-    7: (InputQuality.OFF_CATALOG, ProductCategory.B2B_SOFTWARE), 8: (InputQuality.AMBIGUOUS, ProductCategory.KIDS_BABY),
-    9: (InputQuality.CLEAR, ProductCategory.HOUSEHOLD_CLEANING), 10: (InputQuality.CLEAR, ProductCategory.LUXURY_ACCESSORIES),
-    11: (InputQuality.CLEAR, ProductCategory.SNACKS_PROTEIN), 12: (InputQuality.CLEAR, ProductCategory.PET_SUPPLIES),
-    13: (InputQuality.CLEAR, ProductCategory.SUPPLEMENTS_VITAMINS), 14: (InputQuality.CLEAR, ProductCategory.HOME_TEXTILES_BEDDING),
-    15: (InputQuality.INSUFFICIENT, ProductCategory.OTHER),
-}
-
-
-@pytest.mark.parametrize("number", sorted(EXPECTED_READING))
-async def test_heuristic_intake_reads_each_sample_advertiser(catalog, number):
-    executor = HeuristicStageExecutor(catalog, SignalCalculator(catalog), CreativeLinter())
-    example = next(e for e in catalog.examples if e.number == number)
-    output = (await executor.intake(executor.new_context(example.description), None)).output
-    quality, category = EXPECTED_READING[number]
-    if quality is InputQuality.INSUFFICIENT:
-        assert isinstance(output, ClarificationRequest) and output.questions
-    else:
-        assert (output.input_quality, output.product_category) == (quality, category)

@@ -17,7 +17,6 @@ from app.enums import (
     BrandAttribute,
     ConfigStatus,
     EventStatus,
-    ExecutionMode,
     FailureKind,
     GenderSkew,
     GuardrailTag,
@@ -383,8 +382,7 @@ class CampaignSummary(BaseModel):
 class StageMeta(BaseModel):
     stage: Stage
     ms: int
-    mode: ExecutionMode
-    agent: str | None = None
+    agent: str | None = Field(default=None, description="None when the stage is plain code.")
     model: str | None = None
     reasoning_effort: str | None = None
     prompt_version: str | None = None
@@ -398,7 +396,6 @@ class StageMeta(BaseModel):
 class CampaignPlan(BaseModel):
     run_id: str
     description: str
-    mode: ExecutionMode
     brief: AdvertiserBrief
     publishers: list[PublisherAssessment] = Field(description="All 20, ranked; excluded ones included.")
     personas: PersonaSelection | None
@@ -417,7 +414,6 @@ class StopResult(BaseModel):
 
     run_id: str
     description: str
-    mode: ExecutionMode
     reason: str
     clarifying_questions: list[str]
     examples: list[str]
@@ -433,9 +429,6 @@ class PlanOptions(BaseModel):
     force_exploratory: bool = Field(
         default=False,
         description="Run personas and creatives even when no publisher was recommended.",
-    )
-    mode: ExecutionMode | None = Field(
-        default=None, description="Override the server's execution mode for this run."
     )
     session_id: str | None = Field(
         default=None, max_length=64,
@@ -479,5 +472,5 @@ class PlanResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     status: Literal["ok"] = "ok"
-    mode: ExecutionMode
+    llm_configured: bool = Field(description="False when OPENAI_API_KEY is missing; runs will 503.")
     version: str

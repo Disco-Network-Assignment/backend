@@ -165,11 +165,6 @@ class EventStatus(StrEnum):
     FAILED = "failed"
 
 
-class ExecutionMode(StrEnum):
-    LLM = "llm"              # OpenAI Agents SDK stages
-    HEURISTIC = "heuristic"  # deterministic, data-driven stages (no API key needed)
-
-
 class FailureKind(StrEnum):
     VALIDATION = "validation"
     RATE_LIMIT = "rate_limit"

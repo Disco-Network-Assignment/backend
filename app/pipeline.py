@@ -21,7 +21,7 @@ from app.domain.creative_checks import CreativeLinter, LintContext
 from app.domain.fit_signals import SignalCalculator
 from app.domain.guardrails import AssessmentGuard
 from app.domain.input_policy import InputPolicy, RouteDecision
-from app.enums import ConfigStatus, EventStatus, ExecutionMode, FailureKind, Stage, Verdict
+from app.enums import ConfigStatus, EventStatus, FailureKind, Stage, Verdict
 from app.errors import StageError
 from app.schemas import (
     AdvertiserBrief,
@@ -51,7 +51,6 @@ logger = logging.getLogger(__name__)
 class RunState:
     run_id: str
     request: PlanRequest
-    mode: ExecutionMode
     ctx: RunContext
     trace: list[StageMeta] = field(default_factory=list)
     brief: AdvertiserBrief | None = None
@@ -81,15 +80,11 @@ class CampaignPipeline:
         self._config_builder = config_builder
         self._summary_enabled = summary_enabled
 
-    @property
-    def mode(self) -> ExecutionMode:
-        return self._executor.mode
-
     # ------------------------------------------------------------------ public API
     async def stream(self, request: PlanRequest) -> AsyncIterator[PipelineEvent]:
-        state = RunState(run_id=uuid.uuid4().hex[:12], request=request, mode=self.mode,
+        state = RunState(run_id=uuid.uuid4().hex[:12], request=request,
                          ctx=self._executor.new_context(request.description))
-        logger.info("[PIPELINE] run=%s mode=%s start", state.run_id, state.mode)
+        logger.info("[PIPELINE] run=%s start", state.run_id)
         try:
             async for event in self._run(state):
                 yield event
@@ -116,21 +111,23 @@ class CampaignPipeline:
     # ------------------------------------------------------------------ stages
     async def _run(self, state: RunState) -> AsyncIterator[PipelineEvent]:
         yield _started(Stage.INTAKE)
-        outcome = await self._intake(state)
-        if isinstance(outcome, ClarificationRequest):
-            stop = StopResult(run_id=state.run_id, description=state.request.description, mode=state.mode,
-                              reason=outcome.reason, clarifying_questions=outcome.questions,
-                              examples=self._catalog.example_descriptions(), trace=state.trace)
-            yield PipelineEvent(stage=Stage.STOPPED, status=EventStatus.COMPLETED, data=_dump(stop))
+        run = await self._executor.intake(state.ctx, state.request.options.session_id)
+        state.trace.append(run.meta)
+        if isinstance(run.output, ClarificationRequest):
+            yield self._stopped(state, run.output.reason, run.output.questions)
             return
-        state.brief = state.ctx.brief = outcome
+        state.brief = state.ctx.brief = run.output
         yield _completed(Stage.INTAKE, state, state.brief)
         state.decision = self._policy.route(state.brief)
+        if state.decision.stop:  # the brief writer itself judged the input insufficient
+            yield self._stopped(state, state.decision.reason or self._policy.STOP_REASON,
+                                state.brief.clarifying_questions)
+            return
 
         yield _started(Stage.SIGNALS)
         state.signals = self._signals.compute_all(state.brief)
         state.ctx.fit_signals = {s.publisher_id: s for s in state.signals}
-        state.trace.append(StageMeta(stage=Stage.SIGNALS, ms=0, mode=state.mode))
+        state.trace.append(StageMeta(stage=Stage.SIGNALS, ms=0))
         yield _completed(Stage.SIGNALS, state, state.signals)
 
         yield _started(Stage.MATCH)
@@ -153,7 +150,7 @@ class CampaignPipeline:
         yield _started(Stage.CONFIG)
         state.config = self._config_builder.build(state.brief, state.assessments, state.personas,
                                                   state.creatives, state.decision)
-        state.trace.append(StageMeta(stage=Stage.CONFIG, ms=0, mode=state.mode))
+        state.trace.append(StageMeta(stage=Stage.CONFIG, ms=0))
         yield _completed(Stage.CONFIG, state, state.config)
 
         if self._summary_enabled and state.config.status is ConfigStatus.DRAFT:
@@ -163,24 +160,19 @@ class CampaignPipeline:
             state.summary = run.output
             yield _completed(Stage.SUMMARY, state, state.summary)
 
-        plan = CampaignPlan(run_id=state.run_id, description=state.request.description, mode=state.mode,
-                            brief=state.brief, publishers=state.assessments, personas=state.personas,
+        plan = CampaignPlan(run_id=state.run_id, description=state.request.description, brief=state.brief, publishers=state.assessments, personas=state.personas,
                             creatives=state.creatives, config=state.config, summary=state.summary,
                             trace=state.trace)
         logger.info("[PIPELINE] run=%s done recommended=%d creatives=%d status=%s", state.run_id,
                     len(state.recommended), len(state.creatives), state.config.status)
         yield PipelineEvent(stage=Stage.DONE, status=EventStatus.COMPLETED, data=_dump(plan))
 
-    async def _intake(self, state: RunState) -> AdvertiserBrief | ClarificationRequest:
-        """Junk never reaches a model; everything else goes through triage and its handoffs."""
-        if self._policy.is_trivially_insufficient(state.request.description):
-            state.trace.append(StageMeta(stage=Stage.INTAKE, ms=0, mode=state.mode))
-            return ClarificationRequest(reason=self._policy.STOP_REASON,
-                                        questions=["What do you sell, and who buys it?",
-                                                   "What does a typical order cost?"])
-        run = await self._executor.intake(state.ctx, state.request.options.session_id)
-        state.trace.append(run.meta)
-        return run.output
+    def _stopped(self, state: RunState, reason: str, questions: list[str]) -> PipelineEvent:
+        stop = StopResult(run_id=state.run_id, description=state.request.description, reason=reason,
+                          clarifying_questions=questions or ["What do you sell, and who buys it?",
+                                                             "What does a typical order cost?"],
+                          examples=self._catalog.example_descriptions(), trace=state.trace)
+        return PipelineEvent(stage=Stage.STOPPED, status=EventStatus.COMPLETED, data=_dump(stop))
 
     async def _personas(self, state: RunState) -> PersonaSelection:
         assert state.decision

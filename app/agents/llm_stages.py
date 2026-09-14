@@ -2,8 +2,7 @@
 
 A StageExecutor answers the judgement questions: what is this advertiser, which publishers fit,
 which personas, what should the copy say, plus the optional narrative summary. The pipeline
-never touches the SDK directly, which is what lets the same pipeline run without an API key
-(agents/heuristic_stages.py) and be tested end to end.
+never touches the SDK directly, which is what lets the tests drive it with a scripted executor.
 
 How the SDK is used per stage:
 - intake: a triage agent that HANDS OFF to a brief-writer agent or a clarify agent, with
@@ -27,7 +26,7 @@ from app.domain.catalog import CatalogRepository
 from app.domain.creative_checks import CreativeLinter
 from app.domain.fit_signals import SignalCalculator
 from app.domain.guardrails import AssessmentGuard
-from app.enums import BrandAttribute, ExecutionMode, ProductCategory, Stage
+from app.enums import BrandAttribute, ProductCategory, Stage
 from app.prompts.loader import PromptLoader
 from app.schemas import (
     AdvertiserBrief,
@@ -44,9 +43,6 @@ from app.settings import Settings
 
 
 class StageExecutor(Protocol):
-    @property
-    def mode(self) -> ExecutionMode: ...
-
     def new_context(self, description: str) -> RunContext: ...
 
     async def intake(self, ctx: RunContext, session_id: str | None) -> StageRun: ...
@@ -62,8 +58,6 @@ class StageExecutor(Protocol):
 
 
 class LlmStageExecutor:
-    mode = ExecutionMode.LLM
-
     def __init__(self, settings: Settings, factory: AgentFactory, runner: StructuredRunner,
                  prompts: PromptLoader, catalog: CatalogRepository, guard: AssessmentGuard,
                  signals: SignalCalculator, linter: CreativeLinter) -> None:

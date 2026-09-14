@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
-from app.dependencies import get_catalog, get_pipeline_provider, get_prompts
+from app.dependencies import NO_KEY_MESSAGE, get_catalog, get_prompts
 from app.routes import examples, plan
 from app.schemas import HealthResponse
 from app.settings import settings
@@ -16,13 +16,13 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # fail fast on a broken data pack or prompt file, and warm the default pipeline so the
-    # first request does not pay for it
+    # fail fast on a broken data pack or prompt file
     catalog_repo = get_catalog()
     prompts = get_prompts()
-    provider = get_pipeline_provider()
-    provider.for_mode(None)
-    logger.info("[APP] %s · prompts=%s · mode=%s", catalog_repo, prompts.names, provider.default_mode)
+    logger.info("[APP] %s · prompts=%s · llm_configured=%s", catalog_repo, prompts.names,
+                settings().llm_configured)
+    if not settings().llm_configured:
+        logger.warning("[APP] %s", NO_KEY_MESSAGE)
     yield
     logger.info("[APP] shutting down")
 
@@ -40,4 +40,4 @@ app.include_router(examples.router)
 
 @app.get("/health", response_model=HealthResponse)
 async def health() -> HealthResponse:
-    return HealthResponse(mode=get_pipeline_provider().default_mode, version=__version__)
+    return HealthResponse(llm_configured=settings().llm_configured, version=__version__)

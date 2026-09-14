@@ -1,11 +1,11 @@
-"""What to do with an advertiser description once the intake agent has classified it.
+"""What to do with an advertiser description once the intake agents have classified it.
 
-The classification needs language understanding, so the model makes it; the consequences are
-policy, so code decides them and tests pin them down: junk stops the run, vague or ambiguous
-input continues with visible assumptions and a smaller pilot, off-catalog input continues but
-is expected to end with nothing recommended."""
+The classification needs language understanding, so the agents make it (triage hands junk to
+the clarifier; the brief writer flags vague, ambiguous and off-catalog input). The consequences
+are policy, so code decides them and tests pin them down: insufficient input stops the run,
+vague or ambiguous input continues with visible assumptions and a smaller pilot, off-catalog
+input continues but is expected to end with nothing recommended."""
 
-import re
 from dataclasses import dataclass
 
 from app.enums import InputQuality, RouteFlag
@@ -22,15 +22,8 @@ class RouteDecision:
 
 
 class InputPolicy:
-    _JUNK = re.compile(r"^(test|testing|asdf|idk|hello|hi|hey|\.+|\?+|-+)$", re.I)
-    MIN_WORDS = 3
     STOP_REASON = ("The description does not say what is sold or to whom, so there is nothing "
                    "to match publishers or personas against.")
-
-    def is_trivially_insufficient(self, description: str) -> bool:
-        """Cheap pre-check that saves a model call on empty or junk input."""
-        text = description.strip()
-        return len(text.split()) < self.MIN_WORDS or bool(self._JUNK.match(text))
 
     def route(self, brief: AdvertiserBrief) -> RouteDecision:
         quality = brief.input_quality

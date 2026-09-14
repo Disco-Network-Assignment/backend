@@ -40,7 +40,7 @@ from openai.types.shared import Reasoning
 from pydantic import BaseModel
 
 from app.agents.context import RunContext
-from app.enums import ExecutionMode, FailureKind, Stage
+from app.enums import FailureKind, Stage
 from app.errors import StageError
 from app.prompts.loader import PromptLoader
 from app.schemas import StageMeta
@@ -145,7 +145,7 @@ class StructuredRunner:
                 if not errors:
                     return StageRun(output, StageMeta(
                         stage=stage, ms=round((time.perf_counter() - started) * 1000),
-                        mode=ExecutionMode.LLM, agent=result.last_agent.name,
+                        agent=result.last_agent.name,
                         model=agent.model if isinstance(agent.model, str) else None,
                         reasoning_effort=getattr(agent.model_settings.reasoning, "effort", None),
                         prompt_version=prompt_version, input_tokens=tokens_in, output_tokens=tokens_out,
