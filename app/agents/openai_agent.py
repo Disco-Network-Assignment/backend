@@ -59,6 +59,9 @@ WORKFLOW_NAME = "disco-campaign-brain"   # groups the runs in the OpenAI traces 
 DEFAULT_MAX_TURNS = 6                    # tool calls + handoffs one stage may take
 MAX_ATTEMPTS = 2                         # one run plus one retry with the errors quoted back
 
+NO_CREDITS_MESSAGE = ("the OpenAI account behind OPENAI_API_KEY has no credits remaining; add credits at "
+                      "platform.openai.com/settings/organization/billing and retry")
+
 # provider / SDK exception -> what the API reports; first match wins
 FAILURES = (
     (ModelRefusalError, FailureKind.REFUSAL, "the model declined this request"),
@@ -238,6 +241,9 @@ class StructuredRunner:
     @staticmethod
     def _classify(stage: Stage, error: Exception) -> BaseException:
         """Map a provider or SDK failure to a StageError; anything else is a bug and surfaces as-is."""
+        # OpenAI reports an empty credit balance as a 429 too, but waiting will not fix it
+        if isinstance(error, RateLimitError) and "insufficient_quota" in str(error):
+            return StageError(stage, FailureKind.API, NO_CREDITS_MESSAGE)
         for exception_types, kind, message in FAILURES:
             if isinstance(error, exception_types):
                 return StageError(stage, kind, f"{message}: {error}")

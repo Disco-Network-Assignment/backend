@@ -132,3 +132,25 @@ class TestToolsAndHandoffs:
         with pytest.raises(StageError) as info:
             await runner.run(Stage.INTAKE, triage, "hello", (Reply,), ctx, prompt_version="1")
         assert info.value.kind is FailureKind.VALIDATION and "expected Reply" in info.value.message
+
+
+class TestFailureClassification:
+    def test_no_credits_is_not_reported_as_a_transient_rate_limit(self):
+        import httpx
+        from openai import RateLimitError
+
+        response = httpx.Response(429, request=httpx.Request("POST", "https://api.openai.com/v1/responses"))
+        error = RateLimitError("Error code: 429 - {'error': {'type': 'insufficient_quota'}}", response=response, body=None)
+        classified = StructuredRunner._classify(Stage.INTAKE, error)
+        assert isinstance(classified, StageError) and classified.kind is FailureKind.API
+        assert "no credits" in classified.message
+
+    def test_a_real_rate_limit_still_says_retry(self):
+        import httpx
+        from openai import RateLimitError
+
+        response = httpx.Response(429, request=httpx.Request("POST", "https://api.openai.com/v1/responses"))
+        error = RateLimitError("Error code: 429 - {'error': {'type': 'rate_limit_exceeded'}}", response=response, body=None)
+        classified = StructuredRunner._classify(Stage.INTAKE, error)
+        assert isinstance(classified, StageError) and classified.kind is FailureKind.RATE_LIMIT
+
