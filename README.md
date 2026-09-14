@@ -97,7 +97,7 @@ app/
   domain/           categories · fit_signals · guardrails · economics · budget_split ·
                     creative_checks · input_policy · config_builder
   prompts/loader    loads prompts/*.md ({{var}} templating, versioned)
-prompts/            every prompt the system uses (see prompts/README.md)
+prompts/            one file per agent (triage, intake, clarify, match, personas, creative, summary) + the retry fragment
 evals/              cases + runner (real agents); tests/ pytest (unit, scripted pipeline, API, fake-model runner)
 ```
 

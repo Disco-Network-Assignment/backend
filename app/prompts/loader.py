@@ -47,8 +47,6 @@ class PromptLoader:
         self._dir = prompts_dir
         self._templates: dict[str, PromptTemplate] = {}
         for path in sorted(prompts_dir.rglob("*.md")):
-            if path.name.lower() == "readme.md":
-                continue
             template = self._parse(path)
             if template.name in self._templates:
                 raise PromptError(f"duplicate prompt name '{template.name}' in {path}")
