@@ -2,14 +2,11 @@
 dict hit. A class because it owns state (the parsed rows) and every stage depends on it."""
 
 import math
-import re
 from pathlib import Path
 
 from pydantic import TypeAdapter
 
 from app.schemas import ExampleAdvertiser, Publisher, ShopperPersona
-
-_EXAMPLE_LINE = re.compile(r"^(\d+)\.\s+(.*\S)\s*$")
 
 
 class CatalogRepository:
@@ -73,15 +70,13 @@ class CatalogRepository:
 
     @staticmethod
     def _parse_examples(text: str) -> list[ExampleAdvertiser]:
+        """Lines look like '3. We sell ...'; anything else (blank lines, headings) is skipped."""
         examples: list[ExampleAdvertiser] = []
         for line in text.splitlines():
-            match = _EXAMPLE_LINE.match(line.strip())
-            if match:
-                number = int(match.group(1))
-                examples.append(
-                    ExampleAdvertiser(id=f"example-{number:02d}", number=number,
-                                      description=match.group(2))
-                )
+            number, dot, description = line.strip().partition(".")
+            if dot and number.isdigit() and description.strip():
+                examples.append(ExampleAdvertiser(id=f"example-{int(number):02d}", number=int(number),
+                                                  description=description.strip()))
         return examples
 
     def __repr__(self) -> str:  # helps in logs and debugger sessions

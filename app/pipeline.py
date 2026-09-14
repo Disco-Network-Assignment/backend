@@ -17,7 +17,7 @@ from app.agents.context import RunContext
 from app.agents.llm_stages import StageExecutor
 from app.domain.catalog import CatalogRepository
 from app.domain.config_builder import ConfigBuilder
-from app.domain.creative_checks import CreativeLinter, LintContext
+from app.domain.creative_checks import check_lengths
 from app.domain.fit_signals import SignalCalculator
 from app.domain.guardrails import AssessmentGuard
 from app.domain.input_policy import InputPolicy, RouteDecision
@@ -70,13 +70,12 @@ class RunState:
 class CampaignPipeline:
     def __init__(self, executor: StageExecutor, catalog: CatalogRepository,
                  signal_calculator: SignalCalculator, guard: AssessmentGuard, policy: InputPolicy,
-                 linter: CreativeLinter, config_builder: ConfigBuilder, summary_enabled: bool = True) -> None:
+                 config_builder: ConfigBuilder, summary_enabled: bool = True) -> None:
         self._executor = executor
         self._catalog = catalog
         self._signals = signal_calculator
         self._guard = guard
         self._policy = policy
-        self._linter = linter
         self._config_builder = config_builder
         self._summary_enabled = summary_enabled
 
@@ -208,8 +207,8 @@ class CampaignPipeline:
         state.creatives.sort(key=lambda v: order[v.persona_id])
 
     async def _creative(self, state: RunState, pick: PersonaPick) -> CreativeVariant:
-        """One copywriter run; the agent reviews its own draft with the check_creative tool, and
-        code runs the same checks once more on what came back."""
+        """One copywriter run; the agent checks its own draft with the check_creative tool, and
+        code runs the same length checks once more on what came back."""
         assert state.brief
         persona = self._catalog.persona(pick.persona_id)
         targets = pick.best_publishers or [a.publisher_id for a in state.recommended[:3]]
@@ -217,11 +216,11 @@ class CampaignPipeline:
         checks_before = state.ctx.creative_checks
         run = await self._executor.write_creative(state.ctx, draft_pick, persona, targets)
         state.trace.append(run.meta)
-        issues = self._linter.lint(LintContext(run.output, persona, state.request.description))
+        issues = check_lengths(run.output)
         return CreativeVariant(
             **run.output.model_dump(), id=f"creative-{pick.persona_id}", persona_id=pick.persona_id,
             persona_name=persona.name, target_publishers=targets,
-            lint=LintReport(passed=self._linter.passed(issues), issues=issues,
+            lint=LintReport(passed=not issues, issues=issues,
                             self_checks=state.ctx.creative_checks - checks_before),
         )
 

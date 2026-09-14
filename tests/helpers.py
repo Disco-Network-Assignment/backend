@@ -5,7 +5,6 @@ field through kwargs."""
 from app.agents.context import RunContext
 from app.agents.openai_agent import StageRun
 from app.domain.catalog import CatalogRepository
-from app.domain.creative_checks import CreativeLinter
 from app.domain.fit_signals import SignalCalculator
 from app.enums import (
     BrandAttribute,
@@ -101,14 +100,13 @@ class ScriptedExecutor:
                  picks: tuple[str, ...] = ("persona_004", "persona_001", "persona_002")) -> None:
         self.catalog = catalog
         self.signals = SignalCalculator(catalog)
-        self.linter = CreativeLinter()
         self.brief = brief or create_sample_brief()
         self.clarification = clarification
         self.picks = picks
         self.calls: list[Stage] = []
 
     def new_context(self, description: str) -> RunContext:
-        return RunContext(catalog=self.catalog, signals=self.signals, linter=self.linter, description=description)
+        return RunContext(catalog=self.catalog, signals=self.signals, description=description)
 
     async def intake(self, ctx: RunContext, session_id: str | None) -> StageRun:
         self.session_id = session_id

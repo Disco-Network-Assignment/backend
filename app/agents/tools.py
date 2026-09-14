@@ -5,7 +5,7 @@ persona, and a review of a draft ad. The docstrings become the tool descriptions
 from agents import RunContextWrapper, function_tool
 
 from app.agents.context import RunContext
-from app.domain.creative_checks import LintContext
+from app.domain.creative_checks import check_lengths
 from app.domain.fit_signals import age_overlap_pct
 from app.schemas import CreativeDraft
 
@@ -15,8 +15,8 @@ def fit_signals(ctx: RunContextWrapper[RunContext], publisher_id: str) -> str:
     """Deterministic fit evidence for one publisher against the current advertiser: category
     overlap (1 same shelf, 0.5 adjacent, 0 none), age overlap, gender alignment, income tier vs
     price tier, price vs the publisher's average order value (aov_ratio, aov_fit), reach index,
-    which brand attributes the publisher notes mention, and a blended prior on a 0-100 scale.
-    Call it for every publisher you are about to score."""
+    and a blended prior on a 0-100 scale. Call it for every publisher you are about to score;
+    the publisher's free-text notes are yours to read and weigh."""
     run = ctx.context
     if run.brief is None:
         return "error: the advertiser brief is not available yet"
@@ -47,17 +47,12 @@ def audience_overlap(ctx: RunContextWrapper[RunContext], persona_id: str) -> str
 @function_tool
 def check_creative(ctx: RunContextWrapper[RunContext], headline: str, body: str, cta: str,
                    alt_headline: str) -> str:
-    """Review a draft ad against the unit's length limits (headline 60, body 160, CTA 20
-    characters), the ban on claims the advertiser never made, and the current persona's
-    dislikes. Returns 'ok' or the list of problems to fix. Call it before you finalise, and
-    again after fixing anything it reported."""
+    """Check a draft ad against the unit's length limits (headline 60, body 160, CTA 20
+    characters). Returns 'ok' or the list of problems to fix. Call it before you finalise, and
+    again after fixing anything it reported. Claims and persona fit are your own judgement."""
     run = ctx.context
-    if run.persona is None:
-        return "error: no persona selected for this draft"
     run.creative_checks += 1
     draft = CreativeDraft(headline=headline, body=body, cta=cta, alt_headline=alt_headline,
                           persona_reasoning="")
-    issues = run.linter.lint(LintContext(draft, run.persona, run.description))
-    if not issues:
-        return "ok"
-    return "\n".join(f"- [{issue.severity}] {issue.message}" for issue in issues)
+    issues = check_lengths(draft)
+    return "ok" if not issues else "\n".join(f"- {issue.message}" for issue in issues)

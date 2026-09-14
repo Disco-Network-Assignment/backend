@@ -9,7 +9,6 @@ from app.agents.llm_stages import LlmStageExecutor, StageExecutor
 from app.agents.openai_agent import AgentFactory, StructuredRunner
 from app.domain.catalog import CatalogRepository, load_catalog
 from app.domain.config_builder import ConfigBuilder
-from app.domain.creative_checks import CreativeLinter
 from app.domain.fit_signals import SignalCalculator
 from app.domain.guardrails import AssessmentGuard
 from app.domain.input_policy import InputPolicy
@@ -39,11 +38,10 @@ def create_pipeline(config: Settings | None = None, catalog: CatalogRepository |
     prompts = prompts or get_prompts()
     signals = SignalCalculator(catalog)
     guard = AssessmentGuard(catalog)
-    linter = CreativeLinter()
     executor = executor or LlmStageExecutor(config, AgentFactory(config), StructuredRunner(config, prompts),
-                                            prompts, catalog, guard, signals, linter)
-    return CampaignPipeline(executor, catalog, signals, guard, InputPolicy(), linter,
-                            ConfigBuilder(catalog), summary_enabled=config.summary_stage_enabled)
+                                            prompts, catalog, guard, signals)
+    return CampaignPipeline(executor, catalog, signals, guard, InputPolicy(), ConfigBuilder(catalog),
+                            summary_enabled=config.summary_stage_enabled)
 
 
 @lru_cache

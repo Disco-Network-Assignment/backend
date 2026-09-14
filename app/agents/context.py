@@ -8,9 +8,8 @@ shares this one type, as the SDK requires."""
 from dataclasses import dataclass, field
 
 from app.domain.catalog import CatalogRepository
-from app.domain.creative_checks import CreativeLinter
 from app.domain.fit_signals import SignalCalculator
-from app.schemas import AdvertiserBrief, FitSignals, PublisherAssessment, ShopperPersona
+from app.schemas import AdvertiserBrief, FitSignals, PublisherAssessment
 
 
 @dataclass
@@ -18,12 +17,10 @@ class RunContext:
     # dependencies the tools need
     catalog: CatalogRepository
     signals: SignalCalculator
-    linter: CreativeLinter
     # working state, filled in as the stages advance
     description: str
     brief: AdvertiserBrief | None = None
     fit_signals: dict[str, FitSignals] = field(default_factory=dict)  # cached per publisher
     recommended: list[PublisherAssessment] = field(default_factory=list)
-    persona: ShopperPersona | None = None  # the persona the copywriter is writing for
-    handoff_reason: str | None = None      # why triage handed off, from the handoff callback
-    creative_checks: int = 0               # how often the copywriter asked for a review
+    handoff_reason: str | None = None  # why triage handed off, from the handoff callback
+    creative_checks: int = 0           # how often the copywriter asked for a review

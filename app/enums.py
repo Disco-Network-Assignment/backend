@@ -114,11 +114,6 @@ class GuardrailTag(StrEnum):
     BEYOND_TOP_N = "beyond_top_n"
 
 
-class LintSeverity(StrEnum):
-    HARD = "hard"  # regenerate once, then show with a warning badge
-    SOFT = "soft"  # shown as a warning, never blocks
-
-
 class RouteFlag(StrEnum):
     """What the router asks the UI to surface for a run that continues with caveats."""
 

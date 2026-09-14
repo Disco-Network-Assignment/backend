@@ -2,7 +2,6 @@
 guards, personas, parallel creatives with lint, config and the event protocol."""
 
 from app.domain.config_builder import ConfigBuilder
-from app.domain.creative_checks import CreativeLinter
 from app.domain.fit_signals import SignalCalculator
 from app.domain.guardrails import AssessmentGuard
 from app.domain.input_policy import InputPolicy
@@ -31,7 +30,7 @@ from tests.helpers import SENIOR_DOG_FOOD, ScriptedExecutor, create_sample_brief
 
 def make_pipeline(catalog, executor: ScriptedExecutor) -> CampaignPipeline:
     return CampaignPipeline(executor, catalog, SignalCalculator(catalog), AssessmentGuard(catalog), InputPolicy(),
-                            CreativeLinter(), ConfigBuilder(catalog))
+                            ConfigBuilder(catalog))
 
 
 async def collect(pipeline, description=SENIOR_DOG_FOOD, **options):

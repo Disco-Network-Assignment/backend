@@ -19,7 +19,6 @@ from pydantic import BaseModel
 from app.agents.context import RunContext
 from app.agents.openai_agent import StructuredRunner
 from app.agents.tools import fit_signals
-from app.domain.creative_checks import CreativeLinter
 from app.domain.fit_signals import SignalCalculator
 from app.enums import FailureKind, Stage
 from app.errors import StageError
@@ -66,7 +65,7 @@ OTHER = message(json.dumps({"answer": "meh", "score": 0.1}))
 
 @pytest.fixture
 def ctx(catalog):
-    return RunContext(catalog=catalog, signals=SignalCalculator(catalog), linter=CreativeLinter(),
+    return RunContext(catalog=catalog, signals=SignalCalculator(catalog),
                       description="We sell premium dog food.", brief=create_sample_brief())
 
 

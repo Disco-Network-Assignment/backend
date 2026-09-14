@@ -28,7 +28,7 @@ its declared variables so a typo never reaches production.
 | `clarify.md` | clarifier | none | structured output `ClarificationRequest` |
 | `match_publishers.md` | publisher matcher | `catalog`, `brief`, `publisher_count` | tool `fit_signals(publisher_id)` |
 | `select_personas.md` | persona strategist | `personas`, `persona_cap`, `brief`, `recommended` | tool `audience_overlap(persona_id)` |
-| `write_creative.md` | copywriter (one run per persona) | `brief`, `persona`, `angle`, `watchouts`, `target_publishers` | tool `check_creative(...)` (lint as a tool) |
+| `write_creative.md` | copywriter (one run per persona) | `brief`, `persona`, `angle`, `watchouts`, `target_publishers` | tool `check_creative(...)` (length limits as a tool) |
 | `campaign_summary.md` | strategy summariser | `plan` | optional hosted `CodeInterpreterTool` |
 | `_fragments/validation_retry.md` | appended when structured output fails validation | `errors` | |
 

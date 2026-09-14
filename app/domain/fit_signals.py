@@ -1,43 +1,23 @@
 """Deterministic fit evidence per publisher - the numbers a model must not "vibe".
 
 Category overlap through the taxonomy, demographic overlap, income tier vs price tier, the
-post-purchase AOV ratio, reach, and which brand attributes the publisher's notes mention. The
-matcher agent gets them as evidence, the UI shows them next to the model's reasons, and the
+post-purchase AOV ratio and reach. The matcher agent gets them as evidence (and reads the
+publishers' free-text notes itself), the UI shows them next to the model's reasons, and the
 guard uses the blended prior to flag a verdict that wildly disagrees with the data."""
 
 import math
-import re
 from dataclasses import dataclass
 
 from app.domain.catalog import CatalogRepository
 from app.domain.categories import terms_for
 from app.domain.economics import DEFAULT_ECONOMICS, Economics
-from app.enums import BrandAttribute, GenderSkew, IncomeTier, PriceTier
+from app.enums import GenderSkew, IncomeTier, PriceTier
 from app.schemas import AdvertiserBrief, FitSignals, Publisher
 
 AOV_SWEET_SPOT = (0.3, 2.5)  # price / AOV band in which post-purchase offers convert best
 
-_RANGE = re.compile(r"(\d+)\s*[-–]\s*(\d+)")
 _INCOME_RANK = {IncomeTier.MID: 1, IncomeTier.MID_HIGH: 2, IncomeTier.HIGH: 3}
 _PRICE_RANK = {PriceTier.BUDGET: 0, PriceTier.MID: 1, PriceTier.PREMIUM: 2, PriceTier.LUXURY: 3}
-
-# brand attribute -> what its evidence looks like in a publisher's free-text notes
-NOTE_KEYWORDS: dict[BrandAttribute, re.Pattern[str]] = {
-    BrandAttribute.SUSTAINABLE: re.compile(r"sustainab|eco|recycl|refill", re.I),
-    BrandAttribute.PREMIUM: re.compile(r"premium|quality|affluent|high aov", re.I),
-    BrandAttribute.LUXURY: re.compile(r"affluent|conservative|high aov|quality", re.I),
-    BrandAttribute.VALUE: re.compile(r"value|deal|budget|impulse", re.I),
-    BrandAttribute.SCIENCE_BACKED: re.compile(r"science|evidence|clinical|skeptical", re.I),
-    BrandAttribute.SUBSCRIPTION: re.compile(r"subscription|repeat", re.I),
-    BrandAttribute.GIFTING: re.compile(r"gift", re.I),
-    BrandAttribute.PLAYFUL: re.compile(r"playful|fun", re.I),
-    BrandAttribute.HERITAGE: re.compile(r"heritage|craft|classic|conservative", re.I),
-    BrandAttribute.CONVENIENCE: re.compile(r"convenience|impulse|late-night|frequency", re.I),
-    BrandAttribute.INCLUSIVE: re.compile(r"inclusive|representation", re.I),
-    BrandAttribute.NATURAL_CLEAN: re.compile(r"clean|natural|non-toxic|organic", re.I),
-    BrandAttribute.PERSONALIZED: re.compile(r"personaliz", re.I),
-    BrandAttribute.PERFORMANCE: re.compile(r"fitness|performance|athlet", re.I),
-}
 
 
 @dataclass(frozen=True)
@@ -50,8 +30,11 @@ class PriorWeights:
 
 
 def parse_range(text: str | None) -> tuple[int, int] | None:
-    match = _RANGE.search(text or "")
-    return (int(match.group(1)), int(match.group(2))) if match else None
+    """'25-45' (or with an en dash) -> (25, 45); anything else is unknown."""
+    low, _, high = (text or "").replace("\u2013", "-").partition("-")
+    if low.strip().isdigit() and high.strip().isdigit():
+        return int(low), int(high)
+    return None
 
 
 def age_overlap_pct(target_range: str | None, publisher_range: str) -> float:
@@ -140,8 +123,6 @@ class SignalCalculator:
             aov_ratio=round(ratio, 2),
             aov_fit=aov,
             reach_index=round(reach, 2),
-            notes_keyword_hits=[attr.value for attr in brief.brand_attributes
-                                if NOTE_KEYWORDS[attr].search(publisher.notes)],
             prior=round(prior),
         )
 

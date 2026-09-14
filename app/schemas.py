@@ -22,7 +22,6 @@ from app.enums import (
     GuardrailTag,
     IncomeTier,
     InputQuality,
-    LintSeverity,
     Objective,
     PriceTier,
     ProductCategory,
@@ -164,7 +163,6 @@ class FitSignals(BaseModel):
     aov_ratio: float
     aov_fit: float
     reach_index: float
-    notes_keyword_hits: list[str]
     prior: float = Field(description="Weighted blend of the above on a 0-100 scale.")
 
 
@@ -262,7 +260,6 @@ class CreativeDraft(BaseModel):
 
 
 class LintIssue(BaseModel):
-    severity: LintSeverity
     rule: str
     message: str
 
@@ -271,10 +268,6 @@ class LintReport(BaseModel):
     passed: bool
     issues: list[LintIssue]
     self_checks: int = Field(default=0, description="How often the copywriter called check_creative.")
-
-    @property
-    def hard_issues(self) -> list[LintIssue]:
-        return [i for i in self.issues if i.severity is LintSeverity.HARD]
 
 
 class CreativeVariant(CreativeDraft):

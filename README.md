@@ -41,15 +41,16 @@ POST /api/plan ─▶ triage ─▶ router ─▶ signals ─▶ match ─▶ gu
   with a 3-persona cap and a smaller pilot, off-catalog input continues but is expected to end
   with nothing recommended.
 - **Signals** (code) compute per-publisher evidence the model must not "vibe": taxonomy category
-  overlap, age/gender/income alignment, the post-purchase AOV ratio, reach, note keyword hits.
+  overlap, age/gender/income alignment, the post-purchase AOV ratio, reach.
 - **Match** (agent + tool) scores all 20 publishers against a rubric, calling the `fit_signals`
   function tool for the computed evidence on any publisher it is unsure about;
   **guards** (code) enforce completeness, caps for off-catalog and price mismatches, verdict/score
   consistency and a bounded recommended set, tagging every rule that fired.
 - **Personas** (agent + tool) pick 3-5 with a messaging angle each and reject the rest with a
   reason, using `audience_overlap` to ground `best_publishers`; **creatives** run one copywriter
-  agent per persona in parallel, each calling `check_creative` (the lint rules as a tool) on its own
-  draft before finalising. Code lints the final copy once more and reports the verdict.
+  agent per persona in parallel, each calling `check_creative` (the length limits as a tool) on its
+  own draft before finalising; claims and persona fit are the copywriter's judgement, shown in
+  `persona_reasoning`. Code checks the final lengths once more and reports the verdict.
 - **Config** (code) assembles targeting, fit-weighted allocation with floor/cap, CPM bands, CPA
   target, confidence-scaled pilot budget, KPIs and a forecast; every constant used is echoed into
   `assumptions`. The optional **summary** agent writes the reviewer narrative and can be given the
@@ -61,7 +62,7 @@ POST /api/plan ─▶ triage ─▶ router ─▶ signals ─▶ match ─▶ gu
 |---|---|---|
 | `Agent[RunContext]` with `output_type` | every stage (`agents/openai_agent.py`) | typed outputs, parsed by the SDK, validated by code |
 | Handoffs (`handoff(..., input_type=HandoffReason, on_handoff=...)`) | intake triage → brief_writer / clarifier | the routing decision is a first-class, traceable agent transfer |
-| Function tools (`@function_tool`, `RunContextWrapper`) | `fit_signals`, `audience_overlap`, `check_creative` (`agents/tools.py`) | deterministic evidence and the lint rules are callable by the model instead of pasted in |
+| Function tools (`@function_tool`, `RunContextWrapper`) | `fit_signals`, `audience_overlap`, `check_creative` (`agents/tools.py`) | deterministic evidence and the length limits are callable by the model instead of pasted in |
 | Local context (`RunContext`, `agents/context.py`) | all stages | catalog, computed signals, the brief and the current persona travel with the run, never through the prompt |
 | Sessions (`SQLiteSession` + `SessionSettings(limit)`) | intake | memory across turns of one browser session, bounded history |
 | Hosted sandbox (`CodeInterpreterTool`) | summary, opt-in | model-run Python in OpenAI's sandbox for forecast arithmetic |
@@ -71,8 +72,9 @@ Sandbox *agents* (`agents.sandbox`, a Unix-local or Docker workspace the agent e
 are not used: this pipeline has no filesystem work, and the hosted code interpreter covers the
 only compute the summary needs.
 
-There is no keyword or regex fallback: understanding the advertiser is the agents' job, so an
-input no pattern anticipated is handled the same way as a familiar one. Without a key the API
+There is no keyword matching anywhere in the judgement path: reading the advertiser, the
+publisher notes and the copy is the agents' job, so an input no pattern anticipated is handled
+the same way as a familiar one. Code only computes numbers and enforces limits. Without a key the API
 answers 503 with a message that says so, and the tests drive the pipeline with a scripted
 executor instead.
 
@@ -128,7 +130,7 @@ orchestration is ~150 lines and the seams stay visible), and config editing in t
 Easy: the UI plumbing, the JSON contracts, streaming, the allocation arithmetic. Hard:
 calibrated matching without ground truth (a model will happily rank by reach; the signals,
 guardrails and rubric anchors exist to stop that), copy that is persona-specific rather than
-merely plausible (angle-per-persona plus lint plus one retry), deciding when to ask versus
+merely plausible (angle-per-persona plus a self-check tool), deciding when to ask versus
 assume (the router policy, tested case by case), and testing an agent pipeline without paying
 for it (the scripted executor and the fake SDK model). The interesting work is the contract layer between model and code, the
 eval harness that measures it, and the outcome feedback loop that does not exist yet.

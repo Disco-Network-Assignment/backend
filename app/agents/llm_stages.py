@@ -9,8 +9,8 @@ How the SDK is used per stage:
   SESSION memory so a refined description builds on earlier turns
 - match: the matcher calls the `fit_signals` TOOL for deterministic evidence per publisher
 - personas: the strategist calls `audience_overlap` to ground best_publishers
-- creatives: one copywriter run per persona, each calling `check_creative` to review its own
-  draft before finalising (the lint rules as a tool, not an outer retry loop)
+- creatives: one copywriter run per persona, each calling `check_creative` to check its own
+  draft's lengths before finalising (the check as a tool, not an outer retry loop)
 - summary: optionally given the hosted, sandboxed CodeInterpreterTool for arithmetic
 All runs share one local CONTEXT object (agents/context.py)."""
 
@@ -23,7 +23,6 @@ from app.agents.context import RunContext
 from app.agents.openai_agent import AgentFactory, StageRun, StructuredRunner
 from app.agents.tools import audience_overlap, check_creative, fit_signals
 from app.domain.catalog import CatalogRepository
-from app.domain.creative_checks import CreativeLinter
 from app.domain.fit_signals import SignalCalculator
 from app.domain.guardrails import AssessmentGuard
 from app.enums import BrandAttribute, ProductCategory, Stage
@@ -60,7 +59,7 @@ class StageExecutor(Protocol):
 class LlmStageExecutor:
     def __init__(self, settings: Settings, factory: AgentFactory, runner: StructuredRunner,
                  prompts: PromptLoader, catalog: CatalogRepository, guard: AssessmentGuard,
-                 signals: SignalCalculator, linter: CreativeLinter) -> None:
+                 signals: SignalCalculator) -> None:
         self._settings = settings
         self._factory = factory
         self._runner = runner
@@ -68,11 +67,9 @@ class LlmStageExecutor:
         self._catalog = catalog
         self._guard = guard
         self._signals = signals
-        self._linter = linter
 
     def new_context(self, description: str) -> RunContext:
-        return RunContext(catalog=self._catalog, signals=self._signals, linter=self._linter,
-                          description=description)
+        return RunContext(catalog=self._catalog, signals=self._signals, description=description)
 
     # ---------------------------------------------------------------- stage 1: triage + handoffs
     async def intake(self, ctx: RunContext, session_id: str | None) -> StageRun:
@@ -135,7 +132,6 @@ class LlmStageExecutor:
     async def write_creative(self, ctx: RunContext, pick: PersonaPickDraft, persona: ShopperPersona,
                              target_publishers: list[str]) -> StageRun:
         assert ctx.brief is not None
-        ctx.persona = persona
         prompt = self._prompts.render(
             "write_creative", brief=ctx.brief.model_dump(mode="json"), persona=persona.model_dump(mode="json"),
             angle=pick.angle, watchouts="; ".join(pick.watchouts) or "none",

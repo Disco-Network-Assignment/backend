@@ -5,7 +5,7 @@ import pytest
 
 from app.domain.budget_split import AllocationCandidate, BudgetAllocator
 from app.domain.config_builder import ConfigBuilder
-from app.domain.creative_checks import CreativeLinter, LintContext
+from app.domain.creative_checks import check_lengths
 from app.domain.economics import DEFAULT_ECONOMICS
 from app.domain.fit_signals import SignalCalculator, age_overlap_pct, aov_fit, category_overlap
 from app.domain.guardrails import AssessmentGuard
@@ -16,7 +16,6 @@ from app.enums import (
     GuardrailTag,
     IncomeTier,
     InputQuality,
-    LintSeverity,
     PriceTier,
     PurchaseModel,
     Verdict,
@@ -128,30 +127,12 @@ class TestEconomics:
 # ---------------------------------------------------------------- lint
 
 class TestLint:
-    def issues(self, catalog, persona_id="persona_004", description="vet-formulated", **draft):
-        ctx = LintContext(create_sample_creative(**draft), catalog.persona(persona_id), description)
-        return CreativeLinter().lint(ctx)
+    def test_clean_draft_passes(self):
+        assert check_lengths(create_sample_creative()) == []
 
-    def test_clean_draft_passes(self, catalog):
-        assert self.issues(catalog) == []
-
-    def test_length_and_unstated_claims_are_hard(self, catalog):
-        issues = self.issues(catalog, headline="x" * 61, body="Clinically proven to cure joint pain.")
-        assert {i.rule for i in issues} == {"length", "claims"}
-        assert all(i.severity is LintSeverity.HARD for i in issues)
-
-    def test_claim_stated_by_the_advertiser_is_allowed(self, catalog):
-        assert self.issues(catalog, description="clinically proven", body="Clinically proven nutrition.") == []
-
-    def test_persona_disinterest_trips(self, catalog):
-        issues = self.issues(catalog, persona_id="persona_005", headline="The viral bag everyone is obsessed with")
-        assert any("trendy language" in i.message for i in issues)
-        gifter = self.issues(catalog, persona_id="persona_010", cta="Subscribe now")
-        assert any("subscription-only" in i.message for i in gifter)
-
-    def test_shouting_is_only_a_warning(self, catalog):
-        issues = self.issues(catalog, headline="HUGE DEAL TODAY!! Really!")
-        assert issues and CreativeLinter.passed(issues)
+    def test_over_limit_and_empty_fields_are_reported(self):
+        issues = check_lengths(create_sample_creative(headline="x" * 61, cta="  "))
+        assert [i.message for i in issues] == ["headline is 61 characters (max 60)", "cta is empty"]
 
 
 # ---------------------------------------------------------------- router + planner
