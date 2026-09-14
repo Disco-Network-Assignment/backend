@@ -8,7 +8,7 @@ scripted executor.
 How the SDK is used per stage:
 
     intake     a triage agent HANDS OFF to a brief-writer agent or a clarify agent, with
-               SESSION memory so a refined description builds on earlier turns
+               SESSION memory in Postgres so a refined description builds on earlier turns
     match      the matcher calls the `fit_signals` TOOL for deterministic evidence per publisher
     personas   the strategist calls `audience_overlap` to ground best_publishers
     creatives  one copywriter per persona, each calling `check_creative` on its own draft
@@ -19,10 +19,11 @@ All runs share one local CONTEXT object (agents/context.py).
 
 from typing import Protocol
 
-from agents import CodeInterpreterTool, RunContextWrapper, SQLiteSession, handoff
+from agents import CodeInterpreterTool, RunContextWrapper, handoff
 from agents.extensions.handoff_prompt import prompt_with_handoff_instructions
 
 from app.agents.context import RunContext
+from app.agents.memory import SessionStore
 from app.agents.openai_agent import AgentFactory, StageRun, StructuredRunner
 from app.agents.tools import audience_overlap, check_creative, fit_signals
 from app.domain.catalog import CatalogRepository
@@ -76,11 +77,12 @@ class StageExecutor(Protocol):
 
 class LlmStageExecutor:
     def __init__(self, settings: Settings, factory: AgentFactory, runner: StructuredRunner,
-                 prompts: PromptLoader, catalog: CatalogRepository, guard: AssessmentGuard,
-                 signals: SignalCalculator):
+                 memory: SessionStore, prompts: PromptLoader, catalog: CatalogRepository,
+                 guard: AssessmentGuard, signals: SignalCalculator):
         self.settings = settings
         self.factory = factory
         self.runner = runner
+        self.memory = memory
         self.prompts = prompts
         self.catalog = catalog
         self.guard = guard
@@ -128,7 +130,7 @@ class LlmStageExecutor:
         # session memory: a refined description in the same browser session builds on earlier turns
         session = None
         if session_id:
-            session = SQLiteSession(session_id, str(self.settings.sessions_db))
+            session = self.memory.session(session_id)
 
         return await self.runner.run(
             Stage.INTAKE, triage, triage_prompt.input, (AdvertiserBrief, ClarificationRequest), ctx,

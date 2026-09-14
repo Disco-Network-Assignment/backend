@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
-from app.dependencies import NO_KEY_MESSAGE, get_catalog, get_prompts
+from app.dependencies import NO_KEY_MESSAGE, get_catalog, get_memory, get_prompts
 from app.routes import examples, plan
 from app.schemas import HealthResponse
 from app.settings import settings
@@ -24,6 +24,7 @@ async def lifespan(app: FastAPI):
     if not settings().llm_configured:
         logger.warning("[APP] %s", NO_KEY_MESSAGE)
     yield
+    await get_memory().close()
     logger.info("[APP] shutting down")
 
 

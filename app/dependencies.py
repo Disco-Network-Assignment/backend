@@ -6,6 +6,7 @@ from functools import lru_cache
 from fastapi import HTTPException
 
 from app.agents.llm_stages import LlmStageExecutor, StageExecutor
+from app.agents.memory import SessionStore
 from app.agents.openai_agent import AgentFactory, StructuredRunner
 from app.domain.catalog import CatalogRepository, load_catalog
 from app.domain.config_builder import ConfigBuilder
@@ -29,6 +30,12 @@ def get_prompts() -> PromptLoader:
     return PromptLoader(settings().prompts_dir)
 
 
+@lru_cache
+def get_memory() -> SessionStore:
+    """One Postgres engine per process; the app's lifespan closes it on shutdown."""
+    return SessionStore(settings().database_url)
+
+
 def create_pipeline(config: Settings | None = None, catalog: CatalogRepository | None = None,
                     prompts: PromptLoader | None = None,
                     executor: StageExecutor | None = None) -> CampaignPipeline:
@@ -38,8 +45,9 @@ def create_pipeline(config: Settings | None = None, catalog: CatalogRepository |
     prompts = prompts or get_prompts()
     signals = SignalCalculator(catalog)
     guard = AssessmentGuard(catalog)
-    executor = executor or LlmStageExecutor(config, AgentFactory(config), StructuredRunner(config, prompts),
-                                            prompts, catalog, guard, signals)
+    if executor is None:
+        executor = LlmStageExecutor(config, AgentFactory(config), StructuredRunner(config, prompts),
+                                    get_memory(), prompts, catalog, guard, signals)
     return CampaignPipeline(executor, catalog, signals, guard, InputPolicy(), ConfigBuilder(catalog),
                             summary_enabled=config.summary_stage_enabled)
 

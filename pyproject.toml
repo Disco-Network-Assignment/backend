@@ -9,7 +9,8 @@ dependencies = [
     "pydantic>=2.8",
     "pydantic-settings>=2.3",
     "openai>=3,<4",
-    "openai-agents==0.22.2",
+    "openai-agents[sqlalchemy]==0.22.2",
+    "asyncpg>=0.29",
 ]
 
 [project.optional-dependencies]

@@ -9,6 +9,7 @@ config**, streamed stage by stage. Orchestration is a typed pipeline over the Op
 
 ```bash
 cp .env.example .env            # set OPENAI_API_KEY; every stage is an agent, so it is required
+docker compose up -d            # Postgres for the agents' conversation memory
 uv venv && uv pip install -e ".[dev]"    # or: pip install -e ".[dev]"
 uvicorn app.main:app --reload   # http://localhost:8000/docs
 ```
@@ -35,8 +36,8 @@ POST /api/plan ─▶ triage ─▶ router ─▶ signals ─▶ match ─▶ gu
   `brief_writer`, which returns an `AdvertiserBrief` (controlled category, price tier, purchase
   model, attributes, target customer, `input_quality`, assumptions, questions, interpretations),
   or the `clarifier`, which returns a `ClarificationRequest`. The handoff carries a typed reason.
-  A `SQLiteSession` keyed by the browser's session id gives the conversation memory, so a refined
-  description builds on earlier turns. Advertiser text is wrapped as data, never as an instruction.
+  A Postgres-backed `SQLAlchemySession` keyed by the browser's session id gives the conversation
+  memory, so a refined description builds on earlier turns. Advertiser text is wrapped as data, never as an instruction.
 - **Router** (code) decides the consequence: junk stops the run, vague/ambiguous input continues
   with a 3-persona cap and a smaller pilot, off-catalog input continues but is expected to end
   with nothing recommended.
@@ -64,7 +65,7 @@ POST /api/plan ─▶ triage ─▶ router ─▶ signals ─▶ match ─▶ gu
 | Handoffs (`handoff(..., input_type=HandoffReason, on_handoff=...)`) | intake triage → brief_writer / clarifier | the routing decision is a first-class, traceable agent transfer |
 | Function tools (`@function_tool`, `RunContextWrapper`) | `fit_signals`, `audience_overlap`, `check_creative` (`agents/tools.py`) | deterministic evidence and the length limits are callable by the model instead of pasted in |
 | Local context (`RunContext`, `agents/context.py`) | all stages | catalog, computed signals, the brief and the current persona travel with the run, never through the prompt |
-| Sessions (`SQLiteSession` + `SessionSettings(limit)`) | intake | memory across turns of one browser session, bounded history |
+| Sessions (`SQLAlchemySession` on Postgres + `SessionSettings(limit)`) | intake | memory across turns of one browser session, bounded history |
 | Hosted sandbox (`CodeInterpreterTool`) | summary, opt-in | model-run Python in OpenAI's sandbox for forecast arithmetic |
 | `RunConfig(workflow_name, tracing)` + `result.new_items` / `raw_responses` | runner | trace names, tool-call and handoff counts, token usage per stage |
 
@@ -90,6 +91,7 @@ app/
   pipeline.py       the workflow: stage order, event protocol, creative fan-out, final lint
   routes/           plan (stream + run), examples (the sample advertisers)
   agents/           context (RunContext shared by tools and agents) · tools (function tools) ·
+                    memory (Postgres session store) ·
                     openai_agent (AgentFactory + StructuredRunner: run, validate, one retry) ·
                     llm_stages (agents, handoffs, sessions per stage)
   domain/           categories · fit_signals · guardrails · economics · budget_split ·

@@ -21,8 +21,8 @@ class Settings(BaseSettings):
     summary_stage_enabled: bool = True
     tracing_enabled: bool = True  # OpenAI Agents SDK traces, visible in the OpenAI dashboard
 
-    # conversation memory (OpenAI Agents SDK sessions): one SQLite row set per session_id
-    sessions_db: Path = ROOT_DIR / "sessions.db"
+    # conversation memory (OpenAI Agents SDK sessions) lives in Postgres, one row set per session_id
+    database_url: str = "postgresql+asyncpg://disco:disco@localhost:5433/disco"
     session_history_limit: int = 20
     # give the summary agent OpenAI's hosted, sandboxed code interpreter for its arithmetic
     code_interpreter_enabled: bool = False

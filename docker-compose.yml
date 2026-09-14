@@ -1,0 +1,22 @@
+# Local Postgres for the agents' conversation memory:  docker compose up -d
+# The backend's DATABASE_URL default points at this instance.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: disco-postgres
+    environment:
+      POSTGRES_USER: disco
+      POSTGRES_PASSWORD: disco
+      POSTGRES_DB: disco
+    ports:
+      - "5433:5432"   # host port 5433: 5432 is often taken by another local Postgres
+    volumes:
+      - disco-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U disco -d disco"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  disco-postgres:
