@@ -1,0 +1,8 @@
+# TLS in front of the API. Caddy fetches and renews the certificate on its own.
+{$BACKEND_HOST} {
+	reverse_proxy api:8000 {
+		# the plan endpoint streams NDJSON line by line; never buffer the response
+		flush_interval -1
+	}
+	encode gzip
+}

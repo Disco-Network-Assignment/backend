@@ -24,6 +24,19 @@ scripted executor, API, SDK runner with tools and handoffs against a fake model;
 `python -m evals.run` runs the real agents over the 15 sample advertisers and grades them
 against `evals/cases.py`.
 
+## Deploy (one small EC2 box)
+
+```bash
+# once: an Ubuntu 24.04 instance with deploy/cloud-init.sh as user data, ports 80/443 open,
+# an Elastic IP, and on the server deploy/.env with BACKEND_HOST=<ip-with-dashes>.sslip.io
+deploy/deploy.sh <elastic-ip> ~/.ssh/disco-backend.pem
+```
+
+`deploy/docker-compose.yml` runs Postgres, the API (built from the Dockerfile) and Caddy, which
+gets a Let's Encrypt certificate for the sslip.io hostname and proxies to the API without
+buffering the NDJSON stream. The repo-root `.env` is copied along: it carries `OPENAI_API_KEY`
+and `FRONTEND_ORIGIN` (the Amplify URL, for CORS). Live: https://3-109-228-123.sslip.io/health
+
 ## How it works
 
 ```
