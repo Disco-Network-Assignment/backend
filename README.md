@@ -1,152 +1,74 @@
-# disco-backend
+# Disco campaign brain
 
-FastAPI backend for the Disco take-home: an advertiser describes their business in a sentence
-or two and the service returns **ranked publishers with reasons and exclusions**, **3-5
-persona-tuned creatives** with the persona reasoning attached, and a **structured campaign
-config**, streamed stage by stage. Orchestration is a typed pipeline over the OpenAI Agents SDK.
+An advertiser types one or two sentences about their business. The system returns **ranked
+publishers with a reason each and why the rest were excluded**, **3-5 ad creatives, one per
+shopper persona, with the persona reasoning shown**, and a **structured campaign config**,
+streamed stage by stage so every decision is visible as it is made.
 
-## Run it
+**Demo:** https://main.d3afgogco54xng.amplifyapp.com · API: https://3-109-228-123.sslip.io/health
+· Frontend repo: https://github.com/Disco-Network-Assignment/frontend
 
-```bash
-cp .env.example .env            # set OPENAI_API_KEY; every stage is an agent, so it is required
-docker compose up -d            # Postgres for the agents' conversation memory
-uv venv && uv pip install -e ".[dev]"    # or: pip install -e ".[dev]"
-uvicorn app.main:app --reload   # http://localhost:8000/docs
-```
+## Run it locally
 
 ```bash
-curl -N localhost:8000/api/plan -H 'content-type: application/json' \
-  -d '{"description":"We sell premium dog food for senior dogs. Grain-free, vet-formulated, subscription-based."}'
+cp .env.example .env                       # put your OPENAI_API_KEY in it
+docker compose up -d                       # Postgres (session memory + run history)
+uv venv && uv pip install -e ".[dev]"      # or: pip install -e ".[dev]"
+uvicorn app.main:app --reload              # http://localhost:8000/docs
+# in ../frontend:  npm install && npm run dev   -> http://localhost:5173
 ```
 
-`pytest` runs 58 hermetic tests in four files (domain rules, pipeline end to end against a
-scripted executor, API, SDK runner with tools and handoffs against a fake model; no network).
-`python -m evals.run` runs the real agents over the 15 sample advertisers and grades them
-against `evals/cases.py`.
+`pytest` runs 66 hermetic tests (a scripted executor and a fake SDK model stand in for the
+agents). `python -m evals.run` runs the real agents over the 15 sample advertisers and grades
+each against `evals/cases.py` (add `--only 1,7,15` for a subset; a full pass is ~500k tokens).
+Deploy to one small EC2 box with `deploy/deploy.sh <ip>` (Postgres + API + Caddy TLS).
 
-## Deploy (one small EC2 box)
+## What it is
 
-```bash
-# once: an Ubuntu 24.04 instance with deploy/cloud-init.sh as user data, ports 80/443 open,
-# an Elastic IP, and on the server deploy/.env with BACKEND_HOST=<ip-with-dashes>.sslip.io
-deploy/deploy.sh <elastic-ip> ~/.ssh/disco-backend.pem
-```
+A code-orchestrated pipeline over the OpenAI Agents SDK. Agents answer the four judgement
+questions; code does the numbers and the rules; every hand-off is a typed contract.
 
-`deploy/docker-compose.yml` runs Postgres, the API (built from the Dockerfile) and Caddy, which
-gets a Let's Encrypt certificate for the sslip.io hostname and proxies to the API without
-buffering the NDJSON stream. The repo-root `.env` is copied along: it carries `OPENAI_API_KEY`
-and `FRONTEND_ORIGIN` (the Amplify URL, for CORS). Live: https://3-109-228-123.sslip.io/health
+- **Intake**: a triage agent hands off to a brief writer (a real business) or a clarifier
+  (nothing to plan with). Junk stops with questions; vague or ambiguous input continues with
+  stated assumptions, interpretation chips and a smaller pilot; off-catalog input continues but
+  ends "not recommended". A Postgres session lets a refined description build on the last turn.
+- **Match**: code computes fit signals per publisher (category overlap, age/gender/income
+  alignment, price vs the publisher's AOV, reach). The matcher agent scores all 20 with a rubric,
+  calling the signals as a tool, and reads the publisher notes itself. Guardrails then enforce
+  what a model must never break: every publisher accounted for, off-catalog and price-mismatch
+  caps, verdict/score consistency, a recommended set of 3-6. Every rule that fires is tagged.
+- **Personas and creatives**: the strategist picks 3-5 personas with an angle and watch-outs
+  each and rejects the rest with a reason. One copywriter per persona runs in parallel and checks
+  its own draft's lengths with a tool; claims and persona fit are its judgement, explained in
+  `persona_reasoning` next to the copy.
+- **Config** (code): targeting from brief + personas + publishers; budget split by fit² × log
+  reach inside a 10-40% band; CPM bands by publisher income tier with a fit multiplier; CPA target
+  at 30% of price (60% for subscriptions); pilot size scaled by how much of the brief was stated
+  rather than assumed; KPIs and a forecast. `confidence`, `assumptions` and `open_questions` are
+  fields because a draft that hides its uncertainty is not reviewable.
 
-## How it works
-
-```
-POST /api/plan ─▶ triage ─▶ router ─▶ signals ─▶ match ─▶ guards ─▶ personas ─▶ creatives ─▶ config ─▶ summary
-   (NDJSON)      agents     code      code       agent    code       agent      agent ×N       code      agent
-              (handoffs)                       (+tool)              (+tool)     (+tool, lint)          (+sandbox)
-```
-
-- **Intake** (agents + handoffs) starts with a `triage` agent that hands off to either the
-  `brief_writer`, which returns an `AdvertiserBrief` (controlled category, price tier, purchase
-  model, attributes, target customer, `input_quality`, assumptions, questions, interpretations),
-  or the `clarifier`, which returns a `ClarificationRequest`. The handoff carries a typed reason.
-  A Postgres-backed `SQLAlchemySession` keyed by the browser's session id gives the conversation
-  memory, so a refined description builds on earlier turns. Advertiser text is wrapped as data, never as an instruction.
-- **Router** (code) decides the consequence: junk stops the run, vague/ambiguous input continues
-  with a 3-persona cap and a smaller pilot, off-catalog input continues but is expected to end
-  with nothing recommended.
-- **Signals** (code) compute per-publisher evidence the model must not "vibe": taxonomy category
-  overlap, age/gender/income alignment, the post-purchase AOV ratio, reach.
-- **Match** (agent + tool) scores all 20 publishers against a rubric, calling the `fit_signals`
-  function tool for the computed evidence on any publisher it is unsure about;
-  **guards** (code) enforce completeness, caps for off-catalog and price mismatches, verdict/score
-  consistency and a bounded recommended set, tagging every rule that fired.
-- **Personas** (agent + tool) pick 3-5 with a messaging angle each and reject the rest with a
-  reason, using `audience_overlap` to ground `best_publishers`; **creatives** run one copywriter
-  agent per persona in parallel, each calling `check_creative` (the length limits as a tool) on its
-  own draft before finalising; claims and persona fit are the copywriter's judgement, shown in
-  `persona_reasoning`. Code checks the final lengths once more and reports the verdict.
-- **Config** (code) assembles targeting, fit-weighted allocation with floor/cap, CPM bands, CPA
-  target, confidence-scaled pilot budget, KPIs and a forecast; every constant used is echoed into
-  `assumptions`. The optional **summary** agent writes the reviewer narrative and can be given the
-  hosted `CodeInterpreterTool` sandbox (`CODE_INTERPRETER_ENABLED=true`) for its arithmetic.
-
-### How the OpenAI Agents SDK is used
-
-| SDK primitive | Where | Why |
-|---|---|---|
-| `Agent[RunContext]` with `output_type` | every stage (`agents/openai_agent.py`) | typed outputs, parsed by the SDK, validated by code |
-| Handoffs (`handoff(..., input_type=HandoffReason, on_handoff=...)`) | intake triage → brief_writer / clarifier | the routing decision is a first-class, traceable agent transfer |
-| Function tools (`@function_tool`, `RunContextWrapper`) | `fit_signals`, `audience_overlap`, `check_creative` (`agents/tools.py`) | deterministic evidence and the length limits are callable by the model instead of pasted in |
-| Local context (`RunContext`, `agents/context.py`) | all stages | catalog, computed signals, the brief and the current persona travel with the run, never through the prompt |
-| Sessions (`SQLAlchemySession` on Postgres + `SessionSettings(limit)`) | intake | memory across turns of one browser session, bounded history |
-| Hosted sandbox (`CodeInterpreterTool`) | summary, opt-in | model-run Python in OpenAI's sandbox for forecast arithmetic |
-| `RunConfig(workflow_name, tracing)` + `result.new_items` / `raw_responses` | runner | trace names, tool-call and handoff counts, token usage per stage |
-
-Sandbox *agents* (`agents.sandbox`, a Unix-local or Docker workspace the agent edits files in)
-are not used: this pipeline has no filesystem work, and the hosted code interpreter covers the
-only compute the summary needs.
-
-There is no keyword matching anywhere in the judgement path: reading the advertiser, the
-publisher notes and the copy is the agents' job, so an input no pattern anticipated is handled
-the same way as a familiar one. Code only computes numbers and enforces limits. Without a key the API
-answers 503 with a message that says so, and the tests drive the pipeline with a scripted
-executor instead.
-
-## Layout
-
-```
-app/
-  main.py           FastAPI app (lifespan warms catalog + prompts, creates the runs table), CORS, /health
-  db.py             the one Postgres engine; runs.py  run history (RunStore: save, list, get)
-  settings.py       pydantic-settings: models (matcher vs the rest), effort, mode, timeouts
-  enums.py          domain vocabularies (StrEnum)
-  schemas.py        contracts: catalog rows, stage hand-offs (*Draft = agent output), API shapes
-  dependencies.py   composition root (create_pipeline, get_pipeline: 503 without a key)
-  pipeline.py       the workflow: stage order, event protocol, creative fan-out, final lint
-  routes/           plan (stream + run), examples (the sample advertisers), runs (history: list + get)
-  agents/           context (RunContext shared by tools and agents) · tools (function tools) ·
-                    memory (Postgres session store) ·
-                    openai_agent (AgentFactory + StructuredRunner: run, validate, one retry) ·
-                    llm_stages (agents, handoffs, sessions per stage)
-  domain/           categories · fit_signals · guardrails · economics · budget_split ·
-                    creative_checks · input_policy · config_builder
-  prompts/loader    loads prompts/*.md ({{var}} templating, versioned)
-prompts/            one file per agent (triage, intake, clarify, match, personas, creative, summary) + the retry fragment
-evals/              cases + runner (real agents); tests/ pytest (unit, scripted pipeline, API, fake-model runner)
-```
-
-## Config shape, and why
-
-Allocation is fit² × log(reach) with a 10% floor and 40% cap over at most 5 publishers: fit
-dominates, reach breaks ties, no single publisher swallows a pilot. Bids start from CPM bands by
-publisher income tier with a fit multiplier; the target CPA is 30% of the price for one-time
-purchases and 60% for subscriptions. The pilot budget scales with how much of the brief was
-stated rather than assumed ($5k/14d → $1.5k/7d). `confidence`, `assumptions` and
-`open_questions` are fields of the config because a draft that hides its uncertainty is not
-reviewable.
+Every prompt is in `prompts/`: one file per agent, the retry fragment, and the tool and handoff
+descriptions the model sees. Runs are stored and reloadable from the dashboard.
 
 ## With another week
 
-Learn from outcomes: log every recommendation and its CTR/CVR per advertiser × publisher ×
-persona, re-weight the signal prior nightly, and grow a human-labelled eval set into a CI gate.
-A retrieval layer (embeddings over category + notes, hard filters on demographics/AOV) so a
-10k-publisher catalog is a top-50 re-rank, not a 20-row prompt. Durable orchestration (queue,
-idempotent stages, retries, a fallback model), a claims-policy engine per category, an editable
-config with an approval state, and per-publisher creative variants.
+Learn from outcomes: log CTR/CVR per advertiser × publisher × persona, re-weight the signal prior
+nightly, grow a human-labelled eval set into a CI gate. A retrieval layer so a 10k-publisher
+catalog is a top-50 re-rank, not a 20-row prompt. Durable orchestration (queue, idempotent
+stages, fallback model), a claims policy per category, an editable config with approval state.
 
 ## Intentionally cut
 
-A database and accounts (a JSON download is the hand-off), image creative, real auction
-modelling (heuristic bands with stated assumptions are more honest than fake precision),
-multi-turn refinement (one interpretation-chip re-run covers most of it), agent frameworks (the
-orchestration is ~150 lines and the seams stay visible), and config editing in the UI.
+Accounts and multi-tenancy (one workspace, a JSON export is the hand-off), image creative, real
+auction modelling (bands with stated assumptions beat fake precision), config editing in the UI,
+and any keyword or regex fallback: reading the advertiser is the agents' job, so an input no
+pattern anticipated is handled like any other.
 
-## Hard vs easy, and where the engineering lives
+## Hard vs easy
 
-Easy: the UI plumbing, the JSON contracts, streaming, the allocation arithmetic. Hard:
-calibrated matching without ground truth (a model will happily rank by reach; the signals,
-guardrails and rubric anchors exist to stop that), copy that is persona-specific rather than
-merely plausible (angle-per-persona plus a self-check tool), deciding when to ask versus
-assume (the router policy, tested case by case), and testing an agent pipeline without paying
-for it (the scripted executor and the fake SDK model). The interesting work is the contract layer between model and code, the
-eval harness that measures it, and the outcome feedback loop that does not exist yet.
+Easy: the UI, the contracts, streaming, the allocation arithmetic. Hard: calibrated matching
+without ground truth (a model happily ranks by reach; signals, guardrails and rubric anchors
+stop it), copy that is persona-specific rather than plausible, deciding when to ask versus
+assume, and testing an agent pipeline without paying for every run. The interesting engineering
+is the contract layer between model and code, the eval harness that measures it, and the outcome
+feedback loop that does not exist yet.

@@ -1,6 +1,7 @@
 """End-to-end runs of the pipeline with a scripted executor standing in for the agents: routing,
 guards, personas, parallel creatives with lint, config and the event protocol."""
 
+from app.agents.llm_stages import persona_selection_errors
 from app.domain.config_builder import ConfigBuilder
 from app.domain.fit_signals import SignalCalculator
 from app.domain.guardrails import AssessmentGuard
@@ -20,6 +21,8 @@ from app.schemas import (
     CampaignPlan,
     ClarificationRequest,
     Interpretation,
+    PersonaPickDraft,
+    PersonaSelectionDraft,
     PlanOptions,
     PlanRequest,
     StopResult,
@@ -161,4 +164,22 @@ class TestHistory:
         record = store.records[0]
         assert record.status == "failed" and record.error.stage is Stage.MATCH
         assert record.input_quality is InputQuality.CLEAR  # intake had finished before the failure
+
+
+class TestPersonaSelectionCheck:
+    def make(self, ids):
+        picks = [PersonaPickDraft(persona_id=i, fit_score=80, why_plausible="x", angle="y", watchouts=[],
+                                  best_publishers=[]) for i in ids]
+        return PersonaSelectionDraft(selected=picks, rejected=[])
+
+    def test_fewer_than_three_personas_is_rejected_for_consumer_commerce(self, catalog):
+        errors = persona_selection_errors(self.make(["persona_001", "persona_002"]), catalog, minimum=3, cap=5)
+        assert errors == ["select between 3 and 5 personas (got 2)"]
+
+    def test_three_valid_personas_pass(self, catalog):
+        assert persona_selection_errors(self.make(["persona_001", "persona_002", "persona_003"]), catalog, 3, 5) == []
+
+    def test_unknown_and_duplicate_ids_are_named(self, catalog):
+        errors = persona_selection_errors(self.make(["persona_001", "persona_001", "nope"]), catalog, 3, 5)
+        assert errors == ["unknown persona ids: nope", "a persona was selected twice"]
 

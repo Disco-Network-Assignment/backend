@@ -20,12 +20,11 @@ All runs share one local CONTEXT object (agents/context.py).
 from typing import Protocol
 
 from agents import CodeInterpreterTool, RunContextWrapper, handoff
-from agents.extensions.handoff_prompt import prompt_with_handoff_instructions
 
 from app.agents.context import RunContext
 from app.agents.memory import SessionStore
 from app.agents.openai_agent import AgentFactory, StageRun, StructuredRunner
-from app.agents.tools import audience_overlap, check_creative, fit_signals
+from app.agents.tools import build_tools
 from app.domain.catalog import CatalogRepository
 from app.domain.fit_signals import SignalCalculator
 from app.domain.guardrails import AssessmentGuard
@@ -49,6 +48,7 @@ from app.settings import Settings
 # ---------------------------------------------------------------------------
 
 INTAKE_MAX_TURNS = 4   # triage -> one handoff -> the specialist's answer; more means it is lost
+MIN_PERSONAS = 3       # the assignment asks for 3-5 creatives, one per persona
 
 # ---------------------------------------------------------------------------
 # Contract
@@ -87,6 +87,7 @@ class LlmStageExecutor:
         self.catalog = catalog
         self.guard = guard
         self.signals = signals
+        self.tools = build_tools(prompts)
 
     def new_context(self, description: str) -> RunContext:
         return RunContext(catalog=self.catalog, signals=self.signals, description=description)
@@ -112,17 +113,17 @@ class LlmStageExecutor:
         async def on_handoff(wrapper: RunContextWrapper[RunContext], reason: HandoffReason):
             wrapper.context.handoff_reason = reason.reason
 
-        # the triage agent itself: no output type, it must hand off
+        # the triage agent itself: no output type, it must hand off (its prompt carries the SDK's
+        # standard handoff instructions, so the whole text lives in prompts/triage.md)
         triage_prompt = self.prompts.render("triage", description=ctx.description)
         triage = self.factory.build(
-            Stage.INTAKE, "triage",
-            prompt_with_handoff_instructions(triage_prompt.instructions),
+            Stage.INTAKE, "triage", triage_prompt.instructions,
             handoffs=[
                 handoff(brief_writer, tool_name_override="transfer_to_brief_writer",
-                        tool_description_override="The text describes a real business; write the brief.",
+                        tool_description_override=self.prompts.render("handoff_brief_writer").input,
                         on_handoff=on_handoff, input_type=HandoffReason),
                 handoff(clarifier, tool_name_override="transfer_to_clarifier",
-                        tool_description_override="There is nothing to plan with; ask what is needed.",
+                        tool_description_override=self.prompts.render("handoff_clarifier").input,
                         on_handoff=on_handoff, input_type=HandoffReason),
             ],
         )
@@ -147,7 +148,7 @@ class LlmStageExecutor:
             publisher_count=str(len(self.catalog.publishers)),
         )
         matcher = self.factory.build(Stage.MATCH, "publisher_matcher", prompt.instructions, MatchOutput,
-                                     tools=[fit_signals])
+                                     tools=[self.tools.fit_signals])
         return await self.runner.run(
             Stage.MATCH, matcher, prompt.input, (MatchOutput,), ctx,
             prompt_version=prompt.version, check=self.guard.validation_errors,
@@ -172,10 +173,14 @@ class LlmStageExecutor:
             recommended=recommended,
         )
         strategist = self.factory.build(Stage.PERSONAS, "persona_strategist", prompt.instructions,
-                                        PersonaSelectionDraft, tools=[audience_overlap])
+                                        PersonaSelectionDraft, tools=[self.tools.audience_overlap])
+
+        # consumer commerce needs 3-5 personas; an exploratory run on an off-catalog brief may
+        # legitimately find fewer
+        minimum = min(MIN_PERSONAS, persona_cap) if ctx.brief.is_consumer_commerce else 1
 
         def check(output: PersonaSelectionDraft) -> list[str]:
-            return self._persona_errors(output, persona_cap)
+            return persona_selection_errors(output, self.catalog, minimum, persona_cap)
 
         return await self.runner.run(
             Stage.PERSONAS, strategist, prompt.input, (PersonaSelectionDraft,), ctx,
@@ -202,7 +207,7 @@ class LlmStageExecutor:
             target_publishers=targets,
         )
         copywriter = self.factory.build(Stage.CREATIVE, f"copywriter_{persona.id}", prompt.instructions,
-                                        CreativeDraft, tools=[check_creative])
+                                        CreativeDraft, tools=[self.tools.check_creative])
         return await self.runner.run(
             Stage.CREATIVE, copywriter, prompt.input, (CreativeDraft,), ctx, prompt_version=prompt.version,
         )
@@ -220,24 +225,29 @@ class LlmStageExecutor:
             Stage.SUMMARY, summariser, prompt.input, (CampaignSummary,), ctx, prompt_version=prompt.version,
         )
 
-    # ---- business checks the runner quotes back on a retry ----
 
-    def _persona_errors(self, output: PersonaSelectionDraft, cap: int) -> list[str]:
-        errors = []
-        selected_ids = []
-        for pick in output.selected:
-            selected_ids.append(pick.persona_id)
+# ---------------------------------------------------------------------------
+# Business checks the runner quotes back to the model on a retry
+# ---------------------------------------------------------------------------
 
-        unknown = []
-        for persona_id in selected_ids:
-            if not self.catalog.has_persona(persona_id):
-                unknown.append(persona_id)
-        if unknown:
-            errors.append("unknown persona ids: " + ", ".join(unknown))
 
-        if len(set(selected_ids)) != len(selected_ids):
-            errors.append("a persona was selected twice")
+def persona_selection_errors(output: PersonaSelectionDraft, catalog: CatalogRepository,
+                             minimum: int, cap: int) -> list[str]:
+    errors = []
+    selected_ids = []
+    for pick in output.selected:
+        selected_ids.append(pick.persona_id)
 
-        if not 1 <= len(selected_ids) <= cap:
-            errors.append(f"select between 1 and {cap} personas (got {len(selected_ids)})")
-        return errors
+    unknown = []
+    for persona_id in selected_ids:
+        if not catalog.has_persona(persona_id):
+            unknown.append(persona_id)
+    if unknown:
+        errors.append("unknown persona ids: " + ", ".join(unknown))
+
+    if len(set(selected_ids)) != len(selected_ids):
+        errors.append("a persona was selected twice")
+
+    if not minimum <= len(selected_ids) <= cap:
+        errors.append(f"select between {minimum} and {cap} personas (got {len(selected_ids)})")
+    return errors

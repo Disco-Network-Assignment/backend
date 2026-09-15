@@ -177,6 +177,11 @@ PROMPT_VARIABLES = {
     "write_creative": {"brief": {}, "persona": {}, "angle": "a", "watchouts": "w", "target_publishers": "p"},
     "campaign_summary": {"plan": {}},
     "validation_retry": {"errors": "- missing"},
+    "tool_fit_signals": {},
+    "tool_audience_overlap": {},
+    "tool_check_creative": {},
+    "handoff_brief_writer": {},
+    "handoff_clarifier": {},
 }
 
 
@@ -189,3 +194,10 @@ class TestPrompts:
     def test_missing_variable_raises(self, prompts):
         with pytest.raises(PromptError):
             prompts.render("intake", categories="a")
+
+    def test_every_prompt_file_is_covered_by_this_test(self, prompts):
+        assert set(prompts.names) == set(PROMPT_VARIABLES)
+
+    def test_tool_descriptions_are_single_blocks(self, prompts):
+        rendered = prompts.render("tool_check_creative")
+        assert rendered.instructions == "" and rendered.input.startswith("Check a draft ad")

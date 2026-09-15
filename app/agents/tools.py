@@ -1,22 +1,23 @@
 """Function tools the agents can call. Each one wraps deterministic domain code, so the model
 asks for numbers instead of guessing them: fit evidence for a publisher, audience overlap for a
-persona, and a review of a draft ad. The docstrings become the tool descriptions the model sees."""
+persona, and a length check of a draft ad.
 
-from agents import RunContextWrapper, function_tool
+The description the model sees for each tool is a prompt, so it lives in prompts/tools/*.md
+like every other prompt; `build_tools` reads them and wraps the functions below."""
+
+from dataclasses import dataclass
+
+from agents import FunctionTool, RunContextWrapper, function_tool
 
 from app.agents.context import RunContext
 from app.domain.creative_checks import check_lengths
 from app.domain.fit_signals import age_overlap_pct
+from app.prompts.loader import PromptLoader
 from app.schemas import CreativeDraft
 
 
-@function_tool
 def fit_signals(ctx: RunContextWrapper[RunContext], publisher_id: str) -> str:
-    """Deterministic fit evidence for one publisher against the current advertiser: category
-    overlap (1 same shelf, 0.5 adjacent, 0 none), age overlap, gender alignment, income tier vs
-    price tier, price vs the publisher's average order value (aov_ratio, aov_fit), reach index,
-    and a blended prior on a 0-100 scale. Call it for every publisher you are about to score;
-    the publisher's free-text notes are yours to read and weigh."""
+    """Fit evidence for one publisher (computed once, then cached in the run context)."""
     run = ctx.context
     if run.brief is None:
         return "error: the advertiser brief is not available yet"
@@ -27,10 +28,8 @@ def fit_signals(ctx: RunContextWrapper[RunContext], publisher_id: str) -> str:
     return run.fit_signals[publisher_id].model_dump_json()
 
 
-@function_tool
 def audience_overlap(ctx: RunContextWrapper[RunContext], persona_id: str) -> str:
-    """Age-range overlap (0-1) between one shopper persona and each recommended publisher's
-    audience, so best_publishers is grounded in the catalog rather than guessed."""
+    """Age overlap between one persona and each recommended publisher."""
     run = ctx.context
     if not run.catalog.has_persona(persona_id):
         return f"error: unknown persona id '{persona_id}'"
@@ -41,18 +40,37 @@ def audience_overlap(ctx: RunContextWrapper[RunContext], persona_id: str) -> str
         overlap = age_overlap_pct(persona.age_range, publisher.audience.age_skew)
         rows.append(f"{publisher.id} ({publisher.name}): age overlap {overlap:.0%}, "
                     f"{publisher.audience.gender_split.female:.0%} female, {publisher.audience.income_tier} income")
-    return "\n".join(rows) or "no recommended publishers"
+    if not rows:
+        return "no recommended publishers"
+    return "\n".join(rows)
 
 
-@function_tool
 def check_creative(ctx: RunContextWrapper[RunContext], headline: str, body: str, cta: str,
                    alt_headline: str) -> str:
-    """Check a draft ad against the unit's length limits (headline 60, body 160, CTA 20
-    characters). Returns 'ok' or the list of problems to fix. Call it before you finalise, and
-    again after fixing anything it reported. Claims and persona fit are your own judgement."""
+    """The ad unit's length limits, as a tool the copywriter calls on its own draft."""
     run = ctx.context
     run.creative_checks += 1
     draft = CreativeDraft(headline=headline, body=body, cta=cta, alt_headline=alt_headline,
                           persona_reasoning="")
     issues = check_lengths(draft)
-    return "ok" if not issues else "\n".join(f"- {issue.message}" for issue in issues)
+    if not issues:
+        return "ok"
+    return "\n".join(f"- {issue.message}" for issue in issues)
+
+
+@dataclass(frozen=True)
+class AgentTools:
+    fit_signals: FunctionTool
+    audience_overlap: FunctionTool
+    check_creative: FunctionTool
+
+
+def build_tools(prompts: PromptLoader) -> AgentTools:
+    """Wrap the functions as SDK tools, with their descriptions read from prompts/tools/."""
+    return AgentTools(
+        fit_signals=function_tool(fit_signals, description_override=prompts.render("tool_fit_signals").input),
+        audience_overlap=function_tool(audience_overlap,
+                                       description_override=prompts.render("tool_audience_overlap").input),
+        check_creative=function_tool(check_creative,
+                                     description_override=prompts.render("tool_check_creative").input),
+    )

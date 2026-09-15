@@ -18,7 +18,7 @@ from pydantic import BaseModel
 
 from app.agents.context import RunContext
 from app.agents.openai_agent import StructuredRunner
-from app.agents.tools import fit_signals
+from app.agents.tools import build_tools
 from app.domain.fit_signals import SignalCalculator
 from app.enums import FailureKind, Stage
 from app.errors import StageError
@@ -103,9 +103,11 @@ class TestStructuredRunner:
 
 
 class TestToolsAndHandoffs:
-    async def test_tool_reads_the_shared_context_and_feeds_the_model(self, runner, ctx):
+    async def test_tool_reads_the_shared_context_and_feeds_the_model(self, runner, ctx, prompts):
         model = FakeModel([tool_call("fit_signals", {"publisher_id": "pub_007"}), VALID])
-        agent = make_agent(model, tools=[fit_signals])
+        tools = build_tools(prompts)
+        assert tools.fit_signals.description.startswith("Deterministic fit evidence")  # from prompts/tools/
+        agent = make_agent(model, tools=[tools.fit_signals])
         run = await runner.run(Stage.MATCH, agent, "Score Pawline", (Reply,), ctx, prompt_version="1")
         assert run.meta.tool_calls == 1 and run.output.answer == "ok"
         assert "pub_007" in ctx.fit_signals  # the tool cached its computation in the context

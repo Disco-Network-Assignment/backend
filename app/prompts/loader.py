@@ -1,9 +1,10 @@
 """Loads every prompt file once and renders it on demand.
 
 A prompt file is frontmatter (name, version) plus `# System` and `# User` sections; fragments
-have only a `# User` section. Variables are `{{name}}`; objects render as pretty JSON. Rendering
-with an unknown or missing variable raises, so a typo in a template fails at startup or in the
-test suite, never silently in production."""
+have only a `# User` section, and the descriptions the model sees for tools and handoffs have a
+single `# Description` section (rendered as `input`). Variables are `{{name}}`; objects render as
+pretty JSON. Rendering with an unknown or missing variable raises, so a typo in a template fails
+at startup or in the test suite, never silently in production."""
 
 import json
 import re
@@ -12,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 _FRONTMATTER = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.S)
-_SECTION = re.compile(r"^# (System|User)\s*$", re.M)
+_SECTION = re.compile(r"^# (System|User|Description)\s*$", re.M)
 _VARIABLE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}")
 
 
@@ -104,6 +105,12 @@ class PromptLoader:
         # parts = [preamble, "System", text, "User", text, ...]
         for heading, content in zip(parts[1::2], parts[2::2], strict=True):
             sections[heading] = content.strip()
+        # a tool or handoff description is one block of text with no system/user split
+        if "Description" in sections:
+            if "System" in sections or "User" in sections:
+                raise PromptError(f"{path}: a '# Description' file has no other sections")
+            return PromptTemplate(name=meta["name"], version=meta["version"], system=None,
+                                  user=sections["Description"], path=path)
         if "User" not in sections:
             raise PromptError(f"{path}: needs a '# User' section")
         return PromptTemplate(name=meta["name"], version=meta["version"],
