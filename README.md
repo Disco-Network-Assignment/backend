@@ -14,6 +14,7 @@ streamed stage by stage so every decision is visible as it is made.
 cp .env.example .env                       # put your OPENAI_API_KEY in it
 docker compose up -d                       # Postgres (session memory + run history)
 uv venv && uv pip install -e ".[dev]"      # or: pip install -e ".[dev]"
+alembic upgrade head                       # create / update the run history table
 uvicorn app.main:app --reload              # http://localhost:8000/docs
 # in ../frontend:  npm install && npm run dev   -> http://localhost:5173
 ```
