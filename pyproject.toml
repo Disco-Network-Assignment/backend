@@ -11,6 +11,7 @@ dependencies = [
     "openai>=3,<4",
     "openai-agents[sqlalchemy]==0.22.2",
     "asyncpg>=0.29",
+    "alembic>=1.13",
 ]
 
 [project.optional-dependencies]

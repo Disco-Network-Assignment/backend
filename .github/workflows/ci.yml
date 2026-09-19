@@ -15,10 +15,12 @@ jobs:
           --health-timeout 3s --health-retries 10
     env:
       DISCO_TEST_DATABASE_URL: postgresql+asyncpg://disco:disco@localhost:5433/disco
+      DATABASE_URL: postgresql+asyncpg://disco:disco@localhost:5433/disco
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: "3.12"}
       - run: pip install -e ".[dev]"
-      - run: ruff check app evals tests
+      - run: ruff check app evals tests migrations
+      - run: alembic upgrade head
       - run: pytest -q

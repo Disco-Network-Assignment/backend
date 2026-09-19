@@ -1,6 +1,7 @@
 """Session memory and run history against a real Postgres. Skipped unless
 DISCO_TEST_DATABASE_URL is set (for example the docker-compose instance:
-postgresql+asyncpg://disco:disco@localhost:5433/disco), so the default suite stays hermetic."""
+postgresql+asyncpg://disco:disco@localhost:5433/disco), so the default suite stays hermetic.
+The run history test needs the schema: run `alembic upgrade head` against that database first."""
 
 import os
 import uuid

@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import __version__
-from app.dependencies import NO_KEY_MESSAGE, get_catalog, get_database, get_prompts, get_run_store
+from app.dependencies import NO_KEY_MESSAGE, get_catalog, get_database, get_prompts
 from app.routes import examples, plan, runs
 from app.schemas import HealthResponse
 from app.settings import settings
@@ -23,11 +23,7 @@ async def lifespan(app: FastAPI):
                 settings().llm_configured)
     if not settings().llm_configured:
         logger.warning("[APP] %s", NO_KEY_MESSAGE)
-    # the run history table; the app still serves plans if the database is down, it just keeps nothing
-    try:
-        await get_run_store().ensure_table()
-    except Exception as e:  # noqa: BLE001
-        logger.warning("[APP] run history unavailable (%s); runs will not be stored", e)
+    # the run history table comes from the Alembic migrations (`alembic upgrade head`), not from here
     yield
     await get_database().close()
     logger.info("[APP] shutting down")
