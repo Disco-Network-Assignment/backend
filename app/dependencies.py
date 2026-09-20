@@ -45,6 +45,7 @@ def get_memory() -> SessionStore:
 
 @lru_cache
 def get_run_store() -> PostgresRunStore:
+    """Saves finished runs to Postgres and reads them back for the run history."""
     return PostgresRunStore(get_database())
 
 

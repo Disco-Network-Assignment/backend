@@ -89,11 +89,7 @@ class RunState:
 
     @property
     def recommended(self) -> list[PublisherAssessment]:
-        recommended = []
-        for assessment in self.assessments:
-            if assessment.verdict is Verdict.RECOMMEND:
-                recommended.append(assessment)
-        return recommended
+        return [a for a in self.assessments if a.verdict is Verdict.RECOMMEND]
 
 
 # ---------------------------------------------------------------------------
@@ -283,33 +279,26 @@ class CampaignPipeline:
         run = await self.executor.select_personas(state.ctx, state.decision.persona_cap)
         state.trace.append(run.meta)
 
-        # keep only publisher ids the agent was actually shown
-        candidate_ids = set()
-        for candidate in candidates:
-            candidate_ids.add(candidate.publisher_id)
+        # never trust ids from the model: an invented persona id is dropped rather than failing
+        # the run, and best_publishers keeps only the publisher ids the agent was actually shown
+        shown_ids = {candidate.publisher_id for candidate in candidates}
 
         selected = []
         for pick in run.output.selected:
-            if not self.catalog.has_persona(pick.persona_id):
-                continue  # an invented persona id is dropped rather than failing the run
-            best_publishers = []
-            for publisher_id in pick.best_publishers:
-                if publisher_id in candidate_ids:
-                    best_publishers.append(publisher_id)
-            selected.append(PersonaPick(
-                **pick.model_dump(exclude={"best_publishers"}),
-                persona_name=self.catalog.persona(pick.persona_id).name,
-                best_publishers=best_publishers,
-            ))
+            if self.catalog.has_persona(pick.persona_id):
+                selected.append(PersonaPick(
+                    **pick.model_dump(exclude={"best_publishers"}),
+                    persona_name=self.catalog.persona(pick.persona_id).name,
+                    best_publishers=[p for p in pick.best_publishers if p in shown_ids],
+                ))
 
         rejected = []
         for rejection in run.output.rejected:
-            if not self.catalog.has_persona(rejection.persona_id):
-                continue
-            rejected.append(RejectedPersona(
-                **rejection.model_dump(),
-                persona_name=self.catalog.persona(rejection.persona_id).name,
-            ))
+            if self.catalog.has_persona(rejection.persona_id):
+                rejected.append(RejectedPersona(
+                    **rejection.model_dump(),
+                    persona_name=self.catalog.persona(rejection.persona_id).name,
+                ))
 
         return PersonaSelection(selected=selected, rejected=rejected)
 
@@ -318,9 +307,7 @@ class CampaignPipeline:
     async def _write_creatives(self, state: RunState) -> AsyncIterator[PipelineEvent]:
         """One copywriter per persona, in parallel; a progress event as each one lands."""
         picks = state.personas.selected
-        tasks = []
-        for pick in picks:
-            tasks.append(asyncio.create_task(self._write_creative(state, pick)))
+        tasks = [asyncio.create_task(self._write_creative(state, pick)) for pick in picks]
 
         finished = 0
         try:
@@ -336,14 +323,8 @@ class CampaignPipeline:
                 task.cancel()
 
         # they finished in arrival order; present them in persona order
-        position = {}
-        for index, pick in enumerate(picks):
-            position[pick.persona_id] = index
-
-        def by_persona_order(variant: CreativeVariant) -> int:
-            return position[variant.persona_id]
-
-        state.creatives.sort(key=by_persona_order)
+        persona_order = [pick.persona_id for pick in picks]
+        state.creatives.sort(key=lambda variant: persona_order.index(variant.persona_id))
 
     async def _write_creative(self, state: RunState, pick: PersonaPick) -> CreativeVariant:
         """
@@ -355,9 +336,8 @@ class CampaignPipeline:
         # the ad runs where the persona fits best, or on the top recommended publishers
         target_publishers = pick.best_publishers
         if not target_publishers:
-            target_publishers = []
-            for assessment in state.recommended[:DEFAULT_CREATIVE_TARGET_COUNT]:
-                target_publishers.append(assessment.publisher_id)
+            top = state.recommended[:DEFAULT_CREATIVE_TARGET_COUNT]
+            target_publishers = [assessment.publisher_id for assessment in top]
 
         draft_pick = PersonaPickDraft(**pick.model_dump(exclude={"persona_name"}))
         checks_before = state.ctx.creative_checks
@@ -380,25 +360,14 @@ class CampaignPipeline:
     @staticmethod
     def _plan_view(state: RunState) -> dict:
         """What the summary agent reads: the decisions, not the whole payload."""
-        allocation = []
-        for row in state.config.publisher_allocation:
-            allocation.append(row.model_dump(mode="json"))
-
-        personas = []
-        for pick in state.personas.selected:
-            personas.append({"persona_name": pick.persona_name, "angle": pick.angle})
-
-        creatives = []
-        for creative in state.creatives:
-            creatives.append({"persona": creative.persona_name, "headline": creative.headline,
-                              "lint_passed": creative.lint.passed})
-
         return {
             "business": state.brief.business_summary,
             "input_quality": state.brief.input_quality,
-            "allocation": allocation,
-            "personas": personas,
-            "creatives": creatives,
+            "allocation": as_json(state.config.publisher_allocation),
+            "personas": [{"persona_name": pick.persona_name, "angle": pick.angle}
+                         for pick in state.personas.selected],
+            "creatives": [{"persona": creative.persona_name, "headline": creative.headline,
+                           "lint_passed": creative.lint.passed} for creative in state.creatives],
             "budget": state.config.budget.model_dump(mode="json"),
             "bid_strategy": state.config.bid_strategy.model_dump(mode="json"),
             "kpi": state.config.kpis.primary,
@@ -428,10 +397,7 @@ def completed(stage: Stage, state: RunState, data) -> PipelineEvent:
 def as_json(value):
     """Pydantic models (or lists of them) as plain dicts, ready for the NDJSON line."""
     if isinstance(value, list):
-        converted = []
-        for item in value:
-            converted.append(as_json(item))
-        return converted
+        return [as_json(item) for item in value]
     if hasattr(value, "model_dump"):
         return value.model_dump(mode="json")
     return value
